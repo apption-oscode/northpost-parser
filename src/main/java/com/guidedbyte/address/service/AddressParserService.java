@@ -80,6 +80,17 @@ public class AddressParserService {
 
     /** Parse a single address string using the specified strategy. */
     public ParsingResult parseAddress(String addressText, ParsingStrategy strategy) {
+        return parseAddress(addressText, strategy, true, true);
+    }
+
+    /** Parse with optional addressee and postal-code extraction using lenient strategy. */
+    public ParsingResult parseAddress(String addressText, boolean hasAddressee, boolean hasPostalCode) {
+        return parseAddress(addressText, ParsingStrategy.LENIENT, hasAddressee, hasPostalCode);
+    }
+
+    /** Extraction flags do not change strict mailing-validity requirements. */
+    public ParsingResult parseAddress(
+            String addressText, ParsingStrategy strategy, boolean hasAddressee, boolean hasPostalCode) {
         if (addressText == null || addressText.trim().isEmpty()) {
             return new ParsingResult(
                     AddressComponents.builder().build(),
@@ -96,15 +107,15 @@ public class AddressParserService {
         String normalized = addressText.trim().replaceAll("[ \\t]+", " ").toUpperCase();
 
         return switch (strategy) {
-            case LENIENT -> doParse(normalized, ParsingMode.LENIENT);
-            case STRICT -> doParse(normalized, ParsingMode.STRICT);
+            case LENIENT -> doParse(normalized, ParsingMode.LENIENT, hasAddressee, hasPostalCode);
+            case STRICT -> doParse(normalized, ParsingMode.STRICT, hasAddressee, hasPostalCode);
             case STRICT_THEN_LENIENT -> {
-                ParsingResult strict = doParse(normalized, ParsingMode.STRICT);
+                ParsingResult strict = doParse(normalized, ParsingMode.STRICT, hasAddressee, hasPostalCode);
                 if (strict.successful()) {
                     yield strict;
                 }
                 logger.debug("Strict parsing rejected address, falling back to lenient");
-                ParsingResult lenient = doParse(normalized, ParsingMode.LENIENT);
+                ParsingResult lenient = doParse(normalized, ParsingMode.LENIENT, hasAddressee, hasPostalCode);
                 // Carry forward the strict rejection as a warning
                 List<String> combinedWarnings = new ArrayList<>(lenient.warnings());
                 combinedWarnings.add("Strict parsing failed: " + String.join("; ", strict.errors()));
@@ -118,7 +129,8 @@ public class AddressParserService {
         };
     }
 
-    private ParsingResult doParse(String addressText, ParsingMode mode) {
+    private ParsingResult doParse(
+            String addressText, ParsingMode mode, boolean hasAddressee, boolean hasPostalCode) {
         CollectingErrorListener errorListener = new CollectingErrorListener();
         List<String> warnings = new ArrayList<>();
 
@@ -147,7 +159,7 @@ public class AddressParserService {
             }
 
             // Extract components using the v3 visitor
-            AddressComponentVisitor visitor = new AddressComponentVisitor(mode);
+            AddressComponentVisitor visitor = new AddressComponentVisitor(mode, hasAddressee, hasPostalCode);
             AddressComponents components = visitor.visit(tree);
 
             // Validate and add warnings
@@ -233,6 +245,19 @@ public class AddressParserService {
     /** Batch parsing for multiple addresses with the specified strategy. */
     public List<ParsingResult> parseAddresses(List<String> addresses, ParsingStrategy strategy) {
         return addresses.stream().map(addr -> parseAddress(addr, strategy)).toList();
+    }
+
+    /** Batch parsing with optional addressee and postal-code extraction. */
+    public List<ParsingResult> parseAddresses(
+            List<String> addresses, boolean hasAddressee, boolean hasPostalCode) {
+        return parseAddresses(addresses, ParsingStrategy.LENIENT, hasAddressee, hasPostalCode);
+    }
+
+    public List<ParsingResult> parseAddresses(
+            List<String> addresses, ParsingStrategy strategy, boolean hasAddressee, boolean hasPostalCode) {
+        return addresses.stream()
+                .map(addr -> parseAddress(addr, strategy, hasAddressee, hasPostalCode))
+                .toList();
     }
 
     /** Batch statistics */

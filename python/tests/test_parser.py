@@ -21,6 +21,103 @@ def parser():
     return AddressParserService()
 
 
+@pytest.mark.parametrize("has_addressee", [True, False])
+@pytest.mark.parametrize("has_postal_code", [True, False])
+@pytest.mark.parametrize("strategy", list(ParsingStrategy))
+def test_extraction_options(parser, has_addressee, has_postal_code, strategy):
+    address = "JOHN DOE\n123 MAIN ST\nTORONTO ON M5V 2Y7"
+    result = parser.parse_address(
+        address, strategy, has_addressee=has_addressee, has_postal_code=has_postal_code
+    )
+    assert result.components.addressee == ("JOHN DOE" if has_addressee else "")
+    assert result.components.postal_code == ("M5V 2Y7" if has_postal_code else "")
+    assert result.components.street_number == "123"
+    assert result.components.street_name == "MAIN"
+    assert result.components.municipality == "TORONTO"
+    assert result.components.province == "ON"
+    assert result.successful == (
+        strategy is not ParsingStrategy.STRICT or (has_addressee and has_postal_code)
+    )
+    if strategy is ParsingStrategy.STRICT:
+        if not has_addressee:
+            assert "Missing addressee" in result.errors
+        if not has_postal_code:
+            assert "Missing postal code" in result.errors
+    if strategy is ParsingStrategy.STRICT_THEN_LENIENT and not (has_addressee and has_postal_code):
+        assert result.mode_used is ParsingMode.LENIENT
+        assert any(w.startswith("Strict parsing failed:") for w in result.warnings)
+
+
+@pytest.mark.parametrize("delivery", ["MAIN ST", "B-1565 MAIN ST", "R R 2"])
+def test_no_addressee_routes_first_line_as_delivery(parser, delivery):
+    result = parser.parse_address(f"{delivery}\nTORONTO ON", has_addressee=False, has_postal_code=False)
+    assert result.successful, result.errors
+    assert result.components.addressee == ""
+    assert result.components.municipality == "TORONTO"
+    if delivery == "R R 2":
+        assert result.components.rural_route == "2"
+    else:
+        assert result.components.street_name == "MAIN"
+
+
+def test_no_addressee_single_delivery_line(parser):
+    result = parser.parse_address("123 MAIN ST", has_addressee=False)
+    assert result.components.addressee == ""
+    assert result.components.street_number == "123"
+    assert result.components.street_name == "MAIN"
+    assert parser.parse_address("123 MAIN ST").components.addressee == "123 MAIN ST"
+
+
+def test_street_name_before_comma_separated_civic_number(parser):
+    result = parser.parse_address(
+        "BRIDGE ROAD, 5\nTORONTO, ON", has_addressee=False, has_postal_code=False,
+    )
+    assert result.successful, result.errors
+    assert result.components.street_number == "5"
+    assert result.components.street_name == "BRIDGE ROAD"
+    assert result.components.street_type == ""
+    assert result.components.address_type == AddressType.CIVIC
+    assert result.components.addressee == ""
+    assert result.components.postal_code == ""
+    assert result.components.municipality == "TORONTO"
+    assert result.components.province == "ON"
+    assert not any("without street number" in warning for warning in result.warnings)
+    default = parser.parse_address("BRIDGE ROAD, 5\nTORONTO, ON")
+    assert default.components.addressee == "BRIDGE ROAD , 5"
+    assert default.components.street_number == ""
+
+
+@pytest.mark.parametrize("address", [
+    "M5V 2Y7",
+    "M5V2Y7",
+    "123 MAIN ST\nTORONTO ON M5V 2Y7",
+    "123 MAIN ST\nTORONTO ON\nM5V 2Y7",
+    "M5V 2Y7\n123 MAIN ST\nTORONTO ON",
+    "123 MAIN ST, TORONTO ON M5V 2Y7",
+    "123 MAIN ST\nTORONTO M5V 2Y7",
+])
+def test_postal_code_extraction_disabled(parser, address):
+    result = parser.parse_address(address, has_postal_code=False)
+    assert result.successful, result.errors
+    assert result.components.postal_code == ""
+    if "TORONTO" in address:
+        assert result.components.municipality == "TORONTO"
+    if "ON" not in address.replace("TORONTO", ""):
+        assert result.components.province == ""
+
+
+def test_batch_extraction_options(parser):
+    address = "123 MAIN ST\nTORONTO ON M5V 2Y7"
+    results = parser.parse_addresses(
+        [address, address], ParsingStrategy.STRICT_THEN_LENIENT,
+        has_addressee=False, has_postal_code=False,
+    )
+    assert len(results) == 2
+    assert all(r.successful and r.mode_used is ParsingMode.LENIENT for r in results)
+    assert all(r.components.addressee == r.components.postal_code == "" for r in results)
+    assert parser.parse_address(address).components.postal_code == "M5V 2Y7"
+
+
 def oda_cases():
     path = Path(__file__).resolve().parents[2] / "src/test/resources/oda_test_addresses.csv"
     with path.open(encoding="utf-8") as source:
@@ -108,6 +205,8 @@ def test_french_article_province_guard(parser, province, kind):
     ("APT.5 123 MAIN ST", "5", "123"),
     ("STE200 123 MAIN ST", "200", "123"),
     ("5-123 MAIN ST", "5", "123"),
+    ("B-1565 MAIN ST", "B", "1565"),
+    ("A-712 MAIN ST", "A", "712"),
     ("5B-1685 MAIN ST", "5B", "1685"),
     ("B5-1685 MAIN ST", "B5", "1685"),
     ("PH5-1685 MAIN ST", "PH5", "1685"),
@@ -134,6 +233,21 @@ def test_civic_and_units(parser, delivery, unit, number):
     assert result.components.street_type == "ST"
 
 
+@pytest.mark.parametrize("unit", list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+@pytest.mark.parametrize("addressee", ["", "TEST PERSON\n"])
+def test_single_letter_unit_hyphen_civic(parser, unit, addressee):
+    number = "1565" if unit == "B" else "712"
+    result = parser.parse_address(f"{addressee}{unit.lower()}-{number} MAIN ST\nTORONTO ON M5V 2Y7")
+    assert result.successful, result.errors
+    assert result.components.unit_number == unit
+    assert result.components.street_number == number
+    assert result.components.street_name == "MAIN"
+    assert result.components.street_type == "ST"
+    assert result.components.street_direction == ""
+    assert result.components.address_type == AddressType.CIVIC
+    assert result.components.addressee == addressee.strip()
+
+
 @pytest.mark.parametrize(("delivery", "kind", "field", "value"), [
     ("PO BOX 123", AddressType.POSTAL_BOX, "postal_box_number", "123"),
     ("BOX 123", AddressType.POSTAL_BOX, "postal_box_number", "123"),
@@ -152,6 +266,18 @@ def test_delivery_types(parser, delivery, kind, field, value):
     assert result.successful, result.errors
     assert result.components.address_type == kind
     assert getattr(result.components, field) == value
+
+
+@pytest.mark.parametrize("prefix", ["RR", "R.R.", "R R", "R. R.", "r r", "R\tR"])
+@pytest.mark.parametrize("addressee", ["", "FARM OWNER\n"])
+def test_rural_route_prefix_variants(parser, prefix, addressee):
+    result = parser.parse_address(f"{addressee}{prefix} 2 STN MAIN\nTORONTO ON M5V 2Y7")
+    assert result.successful, result.errors
+    assert result.components.address_type == AddressType.RURAL_ROUTE
+    assert result.components.rural_route == "2"
+    assert result.components.street_number == ""
+    assert result.components.addressee == addressee.strip()
+    assert result.components.municipality == "TORONTO"
 
 
 @pytest.mark.parametrize(("region", "city", "province", "postal"), [

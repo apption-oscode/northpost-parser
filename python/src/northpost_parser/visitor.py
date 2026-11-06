@@ -151,6 +151,17 @@ def gen_del(tokens: list[TokenInfo]) -> bool:
     return len(tokens) >= 2 and tokens[0].text == "GEN" and tokens[1].text in {"DEL", "DEL."}
 
 
+def rural_route_line(tokens: list[TokenInfo]) -> bool:
+    return bool(tokens) and (
+        tokens[0].text in {"RR", "R.R."}
+        or (
+            len(tokens) >= 2
+            and tokens[0].text.removesuffix(".") == "R"
+            and tokens[1].text.removesuffix(".") == "R"
+        )
+    )
+
+
 def find_postal_code(line: LineTokens) -> str | None:
     for i, token in enumerate(line.tokens):
         if token.type == P.POSTAL_CODE:
@@ -180,7 +191,13 @@ def unit_hyphen_civic(tokens: list[TokenInfo]) -> bool:
         and tokens[2].type == P.NUMBER
         and (
             tokens[0].type in NUMERIC_TYPES
-            or (tokens[0].type == P.WORD and tokens[0].text == "PH")
+            or (
+                tokens[0].type == P.WORD
+                and (
+                    tokens[0].text == "PH"
+                    or (len(tokens[0].text) == 1 and tokens[0].text.isalpha())
+                )
+            )
         )
     )
 
@@ -189,12 +206,13 @@ def looks_like_delivery(tokens: list[TokenInfo]) -> bool:
     if not tokens:
         return False
     first = tokens[0]
-    if first.type in NUMERIC_TYPES:
+    if first.type in NUMERIC_TYPES or unit_hyphen_civic(tokens):
         return True
     if first.type == P.LPAREN and len(tokens) >= 2 and tokens[1].type in NUMERIC_TYPES:
         return True
-    if (first.text in PO_BOX_KEYWORDS | {"RR", "GD", "GENERAL"}
-            or gen_del(tokens) or is_unit_designator(first.text) or unit_prefix(first.text)):
+    if (first.text in PO_BOX_KEYWORDS | {"GD", "GENERAL"}
+            or rural_route_line(tokens) or gen_del(tokens)
+            or is_unit_designator(first.text) or unit_prefix(first.text)):
         return True
     return len(tokens) >= 2 and first.text in PREFIX_DIRECTIONS and tokens[1].type in NUMERIC_TYPES
 
@@ -241,11 +259,20 @@ def collect_street_words(tokens: list[TokenInfo], start: int) -> list[str]:
 
 
 class AddressComponentVisitor(CanadianAddressVisitor):
-    def __init__(self, parsing_mode: ParsingMode = ParsingMode.LENIENT):
+    def __init__(
+        self, parsing_mode: ParsingMode = ParsingMode.LENIENT,
+        *, has_addressee: bool = True, has_postal_code: bool = True,
+    ):
+        self.has_addressee = has_addressee
+        self.has_postal_code = has_postal_code
         self.components = AddressComponents(parsing_mode=parsing_mode)
 
     def _set(self, **fields) -> None:
         self.components = replace(self.components, **fields)
+
+    def _set_postal_code(self, postal_code: str) -> None:
+        if self.has_postal_code:
+            self._set(postal_code=postal_code)
 
     def visitAddress(self, ctx: P.AddressContext) -> AddressComponents:
         body = ctx.addressBody()
@@ -271,9 +298,11 @@ class AddressComponentVisitor(CanadianAddressVisitor):
             if comma_split:
                 self._region(lines[0])
             elif len(lines[0].tokens) <= 3 and (pc := find_postal_code(lines[0])):
-                self._set(postal_code=pc)
-            else:
+                self._set_postal_code(pc)
+            elif self.has_addressee:
                 self._set(addressee=lines[0].text)
+            else:
+                self._delivery(lines[0])
         elif comma_split:
             self._region(lines[-1])
             for line in lines[:-1]:
@@ -285,7 +314,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                 region -= 1
             if region >= 1 and postal_code_only(lines[region]):
                 if pc := find_postal_code(lines[region]):
-                    self._set(postal_code=pc)
+                    self._set_postal_code(pc)
                     region -= 1
             self._region(lines[region])
             addressee_seen = False
@@ -295,14 +324,14 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                     self._set(country=line.text)
                 elif postal_code_only(line):
                     if pc := find_postal_code(line):
-                        self._set(postal_code=pc)
+                        self._set_postal_code(pc)
                 elif care_of(tokens):
                     self._set(care_of=" ".join(t.text for t in tokens[3:]))
                 elif tokens[0].text in {"SITE", "COMP", "EMPL"}:
                     self._set(site_info=line.text)
                 elif looks_like_delivery(tokens):
                     self._delivery(line)
-                elif not addressee_seen:
+                elif self.has_addressee and not addressee_seen:
                     self._set(addressee=line.text)
                     addressee_seen = True
                 else:
@@ -368,7 +397,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                         pc = token.text + " " + tokens[i + 1].text + tokens[i + 2].text
                         pc_start, pc_end = i, i + 2
                 if pc:
-                    self._set(postal_code=pc)
+                    self._set_postal_code(pc)
                     break
         province = None
         province_start = province_end = -1
@@ -425,7 +454,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                 if token.type == P.NUMBER:
                     self._set(postal_box_number=token.text)
                     break
-        elif first.text in {"RR", "R.R."}:
+        elif rural_route_line(tokens):
             self._set(address_type=AddressType.RURAL_ROUTE)
             for token in tokens[1:]:
                 if token.type == P.NUMBER:
@@ -435,6 +464,19 @@ class AddressComponentVisitor(CanadianAddressVisitor):
             self._set(address_type=AddressType.GENERAL_DELIVERY)
         elif first.text in {"SITE", "COMP", "EMPL"}:
             self._set(site_info=line.text)
+        elif (
+            not self.has_addressee
+            and len(tokens) >= 3
+            and first.type == P.WORD
+            and tokens[-2].type == P.COMMA
+            and tokens[-1].type == P.NUMBER
+            and all(t.type in WORD_TYPES for t in tokens[:-2])
+        ):
+            self._set(
+                street_number=tokens[-1].text,
+                street_name=" ".join(collect_street_words(tokens[:-2], 0)),
+                street_type="", street_direction="", address_type=AddressType.CIVIC,
+            )
         elif unit_hyphen_civic(tokens):
             self._civic(tokens)
         elif is_unit_designator(first.text):

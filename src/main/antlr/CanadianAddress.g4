@@ -22,7 +22,7 @@ grammar CanadianAddress;
 //   Line 3:  Delivery address — one of:
 //              Civic:    [unit] civicNumber streetName [streetType] [direction]
 //              PO Box:   PO BOX number [STN stationName]
-//              Rural:    RR number [STN stationName]
+//              Rural:    RR | R.R. | R R | R. R. followed by number [STN stationName]
 //              General:  GD [STN stationName]
 //   Line 4:  Municipality  Province  PostalCode
 //            (1 space between municipality and province,
@@ -92,6 +92,10 @@ addressLine
 // Sequence of tokens within a line.
 // WS* (not WS+) between tokens allows adjacent tokens for patterns
 // like C/O (WORD SLASH WORD) and 10-123 (NUMBER HYPHEN NUMBER).
+// Rural route prefixes remain structural: RR/R.R. are one WORD, while
+// R R/R. R. are two WORD tokens; the visitor recognizes both forms.
+// Single-letter units such as B-1565 are WORD HYPHEN NUMBER; the visitor
+// recognizes the hyphenated prefix as a unit rather than an addressee.
 lineContent
     : lineToken (WS* lineToken)*
     ;

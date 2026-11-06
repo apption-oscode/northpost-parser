@@ -103,6 +103,29 @@ var result = parser.parseAddress(address, ParsingStrategy.STRICT);
 var result = parser.parseAddress(address, ParsingStrategy.STRICT_THEN_LENIENT);
 ```
 
+### Optional field extraction
+
+Existing calls automatically extract addressee and postal code. When you know
+either field is absent, disable its extraction:
+
+```java
+var result = parser.parseAddress("MAIN ST\nTORONTO ON", false, false);
+// Arguments after the address: hasAddressee, hasPostalCode.
+var strict = parser.parseAddress(address, ParsingStrategy.STRICT, false, false);
+var batch = parser.parseAddresses(addresses, ParsingStrategy.LENIENT, false, false);
+```
+
+With `hasAddressee=false`, unanchored lines are interpreted as delivery information
+instead of addressee text. With `hasPostalCode=false`, the postal-code field stays
+empty and cannot be used to infer a province. Postal-code tokens can still be
+recognized structurally to keep municipality and delivery lines separate.
+Strict mailing-validity requirements are unchanged: disabling either field
+causes strict parsing to reject an otherwise complete address.
+
+With `hasAddressee=false`, `street name, number` delivery lines such as
+`BRIDGE ROAD, 5` retain the full street name `BRIDGE ROAD` and extract civic
+number `5`, without splitting off a street type.
+
 ## Supported Address Formats
 
 NorthPost handles the standard Canada Post multi-line format and many informal variations:

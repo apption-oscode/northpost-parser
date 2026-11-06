@@ -54,7 +54,8 @@ class _CollectingErrorListener(ErrorListener):
 
 class AddressParserService:
     def parse_address(
-        self, address_text: str | None, strategy: ParsingStrategy = ParsingStrategy.LENIENT
+        self, address_text: str | None, strategy: ParsingStrategy = ParsingStrategy.LENIENT,
+        *, has_addressee: bool = True, has_postal_code: bool = True,
     ) -> ParsingResult:
         if address_text is None or not address_text.strip():
             return ParsingResult(
@@ -64,14 +65,14 @@ class AddressParserService:
         normalized = re.sub(r"[ \t]+", " ", address_text.strip()).upper()
         match strategy:
             case ParsingStrategy.LENIENT:
-                return self._do_parse(normalized, ParsingMode.LENIENT)
+                return self._do_parse(normalized, ParsingMode.LENIENT, has_addressee, has_postal_code)
             case ParsingStrategy.STRICT:
-                return self._do_parse(normalized, ParsingMode.STRICT)
+                return self._do_parse(normalized, ParsingMode.STRICT, has_addressee, has_postal_code)
             case ParsingStrategy.STRICT_THEN_LENIENT:
-                strict = self._do_parse(normalized, ParsingMode.STRICT)
+                strict = self._do_parse(normalized, ParsingMode.STRICT, has_addressee, has_postal_code)
                 if strict.successful:
                     return strict
-                lenient = self._do_parse(normalized, ParsingMode.LENIENT)
+                lenient = self._do_parse(normalized, ParsingMode.LENIENT, has_addressee, has_postal_code)
                 return ParsingResult(
                     lenient.components, lenient.successful, lenient.errors,
                     lenient.warnings + ("Strict parsing failed: " + "; ".join(strict.errors),),
@@ -80,7 +81,9 @@ class AddressParserService:
             case _:
                 raise ValueError(f"Unknown parsing strategy: {strategy!r}")
 
-    def _do_parse(self, address_text: str, mode: ParsingMode) -> ParsingResult:
+    def _do_parse(
+        self, address_text: str, mode: ParsingMode, has_addressee: bool, has_postal_code: bool
+    ) -> ParsingResult:
         listener = _CollectingErrorListener()
         warnings: list[str] = []
         try:
@@ -95,7 +98,9 @@ class AddressParserService:
                 return ParsingResult(
                     AddressComponents(parsing_mode=mode), False, tuple(listener.errors), (), mode,
                 )
-            components = AddressComponentVisitor(mode).visit(tree)
+            components = AddressComponentVisitor(
+                mode, has_addressee=has_addressee, has_postal_code=has_postal_code
+            ).visit(tree)
             warnings.extend(self._validate_components(components))
             if mode is ParsingMode.STRICT and not components.is_mailing_valid():
                 return ParsingResult(
@@ -144,9 +149,15 @@ class AddressParserService:
         return warnings
 
     def parse_addresses(
-        self, addresses: Iterable[str | None], strategy: ParsingStrategy = ParsingStrategy.LENIENT
+        self, addresses: Iterable[str | None], strategy: ParsingStrategy = ParsingStrategy.LENIENT,
+        *, has_addressee: bool = True, has_postal_code: bool = True,
     ) -> list[ParsingResult]:
-        return [self.parse_address(address, strategy) for address in addresses]
+        return [
+            self.parse_address(
+                address, strategy, has_addressee=has_addressee, has_postal_code=has_postal_code
+            )
+            for address in addresses
+        ]
 
     def get_batch_statistics(self, results: Iterable[ParsingResult]) -> BatchStatistics:
         results = list(results)

@@ -56,6 +56,32 @@ Results contain immutable error/warning tuples and the mode actually used.
 `parse_addresses` and `get_batch_statistics` provide batch parsing and statistics.
 Unknown street types/directions are preserved by normalization.
 
+### Optional field extraction
+
+Both `parse_address` and `parse_addresses` accept keyword-only
+`has_addressee` and `has_postal_code` flags, defaulting to `True` to preserve
+automatic extraction:
+
+```python
+result = parser.parse_address(
+    "MAIN ST\nTORONTO ON", has_addressee=False, has_postal_code=False,
+)
+results = parser.parse_addresses(
+    addresses, has_addressee=False, has_postal_code=False,
+)
+```
+
+When addressee extraction is disabled, unanchored lines are interpreted as
+delivery information instead.
+With `has_addressee=False`, a delivery line in `street name, number` format
+(for example, `BRIDGE ROAD, 5`) retains the full street name `BRIDGE ROAD` and
+extracts civic number `5`, without splitting off a street type.
+Disabling postal-code extraction leaves that field
+empty and prevents province inference from it. Postal-code tokens can still be
+recognized structurally to separate address lines and municipality text.
+Strict mailing-validity requirements remain unchanged, so disabling either field
+causes strict parsing to reject an otherwise complete address.
+
 ## ANTLR generation
 
 The single source of truth is
