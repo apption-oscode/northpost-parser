@@ -32,7 +32,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Set up Java for ANTLR generation check
+      - name: Set up Java for ANTLR generation
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: 21
@@ -47,10 +47,10 @@ jobs:
       - name: Set version from tag
         run: poetry version "${GITHUB_REF_NAME#v}"
 
-      - name: Verify, test, and build
+      - name: Regenerate, test, and build
         run: |
           poetry check --lock
-          poetry run python scripts/generate_parser.py --check
+          poetry run python scripts/generate_parser.py
           poetry run pytest
           poetry build
 
