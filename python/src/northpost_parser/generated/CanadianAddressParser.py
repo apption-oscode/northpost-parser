@@ -51,9 +51,9 @@ class CanadianAddressParser ( Parser ):
                      "<INVALID>", "'/'", "'-'", "'.'", "','", "'&'", "'('", 
                      "')'" ]
 
-    symbolicNames = [ "<INVALID>", "POSTAL_CODE", "NUMBER", "WORD", "ALPHANUMERIC", 
-                      "SLASH", "HYPHEN", "DOT", "COMMA", "AMPERSAND", "LPAREN", 
-                      "RPAREN", "NL", "WS", "CATCHALL" ]
+    symbolicNames = [ "<INVALID>", "POSTAL_CODE", "NUMBER", "ALPHANUMERIC", 
+                      "WORD", "SLASH", "HYPHEN", "DOT", "COMMA", "AMPERSAND", 
+                      "LPAREN", "RPAREN", "NL", "WS", "CATCHALL" ]
 
     RULE_address = 0
     RULE_addressBody = 1
@@ -68,8 +68,8 @@ class CanadianAddressParser ( Parser ):
     EOF = Token.EOF
     POSTAL_CODE=1
     NUMBER=2
-    WORD=3
-    ALPHANUMERIC=4
+    ALPHANUMERIC=3
+    WORD=4
     SLASH=5
     HYPHEN=6
     DOT=7
