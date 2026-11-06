@@ -81,4 +81,23 @@ Tests reuse the repository's curated ODA fixture. The large ODA/NAR dataset
 validation runners remain Java tooling; those datasets are not bundled in the
 Python distribution. Existing Java releases and Maven publishing are unchanged.
 
+## Releasing to PyPI
+
+Publishing a GitHub release with a `vX.Y.Z` tag runs
+[`release-python.yml`](../.github/workflows/release-python.yml) alongside the
+Java release. It sets the package version from the tag, verifies the generated
+sources, runs the tests, builds, and publishes using
+[PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/) (no token).
+
+One-time setup:
+
+1. On PyPI, add a trusted publisher for project `northpost-parser`
+   (use *pending publisher* for the first release): owner `ryansmith4`,
+   repository `northpost-parser`, workflow `release-python.yml`,
+   environment `pypi`.
+2. In the GitHub repository settings, create an environment named `pypi`
+   (optionally requiring reviewer approval).
+
+To retry a failed publish: `gh workflow run release-python.yml --ref vX.Y.Z`.
+
 Licensed under the [Apache-2.0 license](LICENSE).
