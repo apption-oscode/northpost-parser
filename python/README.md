@@ -56,6 +56,14 @@ Results contain immutable error/warning tuples and the mode actually used.
 `parse_addresses` and `get_batch_statistics` provide batch parsing and statistics.
 Unknown street types/directions are preserved by normalization.
 
+Site information and rural routes can share a delivery line:
+`SITE 4 BOX 23 RR 5` produces `site_info="SITE 4 BOX 23"`,
+`rural_route="5"`, and address type `RURAL_ROUTE`. The route prefix also
+accepts `R.R.`, `R R`, and `R. R.`. The site box number is not a postal box number.
+
+French postal boxes accept `CP`, `C.P`, `C.P.`, and `CASE POSTALE` before the
+box number, including comma-separated forms such as `C.P 2086, QUEBEC, QC`.
+
 ### Optional field extraction
 
 Both `parse_address` and `parse_addresses` accept keyword-only

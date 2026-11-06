@@ -742,7 +742,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
     private static final Set<String> COUNTRY_KEYWORDS = Set.of("CANADA", "CAN", "CA");
 
     /** PO Box keywords (English and French) */
-    private static final Set<String> PO_BOX_KEYWORDS = Set.of("PO", "P.O.", "CP", "C.P.", "BOX");
+    private static final Set<String> PO_BOX_KEYWORDS = Set.of("PO", "P.O.", "CP", "C.P", "C.P.", "BOX");
 
     /** Postal code pattern: A1A 1A1 or A1A1A1 */
     private static final Pattern POSTAL_CODE_FSA = Pattern.compile("[A-Z]\\d[A-Z]");
@@ -866,7 +866,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
                 switch (cl.role()) {
                     case DELIVERY -> interpretDeliveryLine(cl.line());
                     case CARE_OF -> builder.careOf(extractAfterCareOf(cl.line().tokens));
-                    case SITE_INFO -> builder.siteInfo(cl.line().text);
+                    case SITE_INFO -> interpretSiteLine(cl.line());
                     case COUNTRY -> builder.country(cl.line().text);
                     case POSTAL_CODE_ONLY -> {
                         String pc = findPostalCode(cl.line());
@@ -1105,7 +1105,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
         }
 
         // Check for PO Box: starts with PO, CP, BOX, P.O., C.P.
-        if (PO_BOX_KEYWORDS.contains(firstText)) {
+        if (isPostalBoxLine(tokens)) {
             interpretPoBoxLine(tokens);
             return;
         }
@@ -1123,7 +1123,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
 
         // Check for site info: starts with SITE or COMP
         if (firstText.equals("SITE") || firstText.equals("COMP") || firstText.equals("EMPL")) {
-            builder.siteInfo(line.text);
+            interpretSiteLine(line);
             return;
         }
 
@@ -1726,6 +1726,24 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
         }
     }
 
+    private void interpretSiteLine(LineTokens line) {
+        List<TokenInfo> tokens = line.tokens;
+        for (int idx = 1; idx < tokens.size(); idx++) {
+            List<TokenInfo> suffix = tokens.subList(idx, tokens.size());
+            if (isRuralRouteLine(suffix)) {
+                String first = suffix.get(0).text.toUpperCase();
+                int prefixLength = first.equals("RR") || first.equals("R.R.") ? 1 : 2;
+                if (suffix.size() > prefixLength
+                        && suffix.get(prefixLength).type == CanadianAddressParser.NUMBER) {
+                    builder.siteInfo(buildText(tokens.subList(0, idx)));
+                    interpretRuralRouteLine(suffix);
+                    return;
+                }
+            }
+        }
+        builder.siteInfo(line.text);
+    }
+
     private void interpretRuralRouteLine(List<TokenInfo> tokens) {
         builder.addressType(AddressType.RURAL_ROUTE);
         // Find the route number (first NUMBER after RR)
@@ -1743,6 +1761,14 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
     }
 
     // ---- Helper methods ----
+
+    private static boolean isPostalBoxLine(List<TokenInfo> tokens) {
+        if (tokens.isEmpty()) return false;
+        return PO_BOX_KEYWORDS.contains(tokens.get(0).text.toUpperCase())
+                || (tokens.size() >= 2
+                        && tokens.get(0).text.equalsIgnoreCase("CASE")
+                        && tokens.get(1).text.equalsIgnoreCase("POSTALE"));
+    }
 
     private static boolean isRuralRouteLine(List<TokenInfo> tokens) {
         if (tokens.isEmpty()) return false;
@@ -1956,7 +1982,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
         }
         String firstText = first.text.toUpperCase();
         // Starts with PO Box, RR, GD, or unit designator → delivery line
-        if (PO_BOX_KEYWORDS.contains(firstText) || isRuralRouteLine(tokens) || firstText.equals("GD")) {
+        if (isPostalBoxLine(tokens) || isRuralRouteLine(tokens) || firstText.equals("GD")) {
             return true;
         }
         // "GENERAL DELIVERY" or "GEN DEL" patterns

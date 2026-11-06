@@ -268,6 +268,38 @@ def test_delivery_types(parser, delivery, kind, field, value):
     assert getattr(result.components, field) == value
 
 
+@pytest.mark.parametrize("prefix", ["CP", "C.P", "C.P.", "CASE POSTALE", "case postale"])
+@pytest.mark.parametrize("layout", ["single", "comma", "multiline", "addressee"])
+def test_french_postal_box_variants(parser, prefix, layout):
+    delivery = f"{prefix} 2086"
+    address = {
+        "single": delivery,
+        "comma": f"{delivery}, QUEBEC, QC",
+        "multiline": f"{delivery}\nQUEBEC QC",
+        "addressee": f"ENTREPRISE\n{delivery}\nQUEBEC QC",
+    }[layout]
+    result = (
+        parser.parse_address(address, has_addressee=False, has_postal_code=False)
+        if layout == "single" else parser.parse_address(address)
+    )
+    assert result.successful, result.errors
+    assert result.components.postal_box_number == "2086"
+    assert result.components.address_type == AddressType.POSTAL_BOX
+    assert result.components.street_number == ""
+    assert result.components.care_of == ""
+    assert result.components.addressee == ("ENTREPRISE" if layout == "addressee" else "")
+    if layout != "single":
+        assert result.components.municipality == "QUEBEC"
+        assert result.components.province == "QC"
+
+
+def test_case_without_postale_is_not_postal_box(parser):
+    result = parser.parse_address("CASE COMPANY\n123 MAIN ST\nTORONTO ON")
+    assert result.components.addressee == "CASE COMPANY"
+    assert result.components.postal_box_number == ""
+    assert result.components.address_type == AddressType.CIVIC
+
+
 @pytest.mark.parametrize("prefix", ["RR", "R.R.", "R R", "R. R.", "r r", "R\tR"])
 @pytest.mark.parametrize("addressee", ["", "FARM OWNER\n"])
 def test_rural_route_prefix_variants(parser, prefix, addressee):
@@ -278,6 +310,47 @@ def test_rural_route_prefix_variants(parser, prefix, addressee):
     assert result.components.street_number == ""
     assert result.components.addressee == addressee.strip()
     assert result.components.municipality == "TORONTO"
+
+
+@pytest.mark.parametrize("prefix", ["RR", "R.R.", "R R", "R. R."])
+@pytest.mark.parametrize("site", ["SITE 4 BOX 23", "SITE 4 COMP 23", "COMP 23", "EMPL 4"])
+@pytest.mark.parametrize("layout", ["multiline", "single", "comma"])
+def test_rural_route_on_site_line(parser, prefix, site, layout):
+    delivery = f"{site} {prefix} 5"
+    address = {
+        "multiline": f"{delivery}\nTORONTO ON",
+        "single": delivery,
+        "comma": f"{delivery}, TORONTO ON",
+    }[layout]
+    result = parser.parse_address(address, has_addressee=False, has_postal_code=False)
+    assert result.successful, result.errors
+    assert result.components.site_info == site
+    assert result.components.rural_route == "5"
+    assert result.components.address_type == AddressType.RURAL_ROUTE
+    assert result.components.postal_box_number == ""
+    assert result.components.street_number == ""
+    assert result.components.addressee == result.components.postal_code == ""
+    if layout != "single":
+        assert result.components.municipality == "TORONTO"
+        assert result.components.province == "ON"
+
+
+@pytest.mark.parametrize("site", ["SITE 4 BOX 23", "SITE 4 BOX 23 RR", "SITE 4 BOX 23 R R"])
+def test_site_without_valid_rural_route_suffix(parser, site):
+    result = parser.parse_address(f"{site}\nTORONTO ON", has_addressee=False)
+    assert result.components.site_info == site
+    assert result.components.rural_route == ""
+    assert result.components.postal_box_number == ""
+
+
+def test_rural_route_on_site_line_with_addressee(parser):
+    result = parser.parse_address("FARM OWNER\nSITE 4 BOX 23 RR 5\nTORONTO ON M5V 2Y7")
+    assert result.successful, result.errors
+    assert result.components.addressee == "FARM OWNER"
+    assert result.components.site_info == "SITE 4 BOX 23"
+    assert result.components.rural_route == "5"
+    assert result.components.address_type == AddressType.RURAL_ROUTE
+    assert result.components.postal_code == "M5V 2Y7"
 
 
 @pytest.mark.parametrize(("region", "city", "province", "postal"), [

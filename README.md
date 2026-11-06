@@ -48,7 +48,7 @@ implementation("com.guidedbyte:northpost-parser:1.0.0")
 - **English and French** — recognizes ~110 English and ~25 French street types, bilingual directionals (N/S/E/W, NORD/SUD/EST/OUEST), and French linking particles (DE, DU, DES, etc.)
 - **Smart disambiguation** — French type-first detection (RUE PRINCIPALE), lettered avenues (AVENUE P), opposing direction pairs (EAST WEST RD), French article prefixes (GRANDE ALLEE), type-as-name guard (AVENUE RD → name=AVENUE, type=RD)
 - **Preserves what you write** — hyphens (2E-ET-3E), slashes (36/37), ampersands (6 & 10), spaced dashes (RD - RTE 113), and parentheses (DRIVEWAY (THE)) retained in street names
-- **All delivery types** — civic addresses, PO boxes (PO BOX / CP / C.P.), rural routes (RR), general delivery (GD), and mixed
+- **All delivery types** — civic addresses, PO boxes (PO BOX / CP / C.P / C.P. / CASE POSTALE), rural routes (RR), general delivery (GD), and mixed
 - **Flexible input** — handles multi-line (Canada Post format), single-line with commas, lowercase, extra whitespace, accented characters, and various abbreviations
 - **Three parsing modes** — `LENIENT` (extract what's available), `STRICT` (reject incomplete addresses), and `AUTO` (try strict, fall back to lenient)
 - **Zero framework dependencies** — depends only on ANTLR runtime and SLF4J
@@ -195,7 +195,7 @@ Lines are classified using **anchor-based detection** rather than fixed position
 | Region | Last line (positional — Canada Post convention) |
 | Delivery | Lines starting with a civic number, PO/CP/BOX, RR, GD, GENERAL, or unit designator |
 | Care-of | Lines matching C/O or A/S pattern |
-| Site info | Lines starting with SITE, COMP, or EMPL |
+| Site info | Lines starting with SITE, COMP, or EMPL; a same-line rural route is extracted separately (`SITE 4 BOX 23 RR 5` → site `SITE 4 BOX 23`, route `5`) |
 | Addressee | First line with no recognized delivery anchor |
 | Subsequent unanchored | Routed through delivery interpretation |
 

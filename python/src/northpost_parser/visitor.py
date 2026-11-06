@@ -68,7 +68,7 @@ PROVINCE_NAMES = {
     "N.W.T.": "NT", "NWT": "NT", "Y.T.": "YT",
 }
 COUNTRY_KEYWORDS = {"CANADA", "CAN", "CA"}
-PO_BOX_KEYWORDS = {"PO", "P.O.", "CP", "C.P.", "BOX"}
+PO_BOX_KEYWORDS = {"PO", "P.O.", "CP", "C.P", "C.P.", "BOX"}
 NUMERIC_TYPES = {P.NUMBER, P.ALPHANUMERIC}
 WORD_TYPES = NUMERIC_TYPES | {P.WORD}
 
@@ -151,6 +151,13 @@ def gen_del(tokens: list[TokenInfo]) -> bool:
     return len(tokens) >= 2 and tokens[0].text == "GEN" and tokens[1].text in {"DEL", "DEL."}
 
 
+def postal_box_line(tokens: list[TokenInfo]) -> bool:
+    return bool(tokens) and (
+        tokens[0].text in PO_BOX_KEYWORDS
+        or (len(tokens) >= 2 and tokens[0].text == "CASE" and tokens[1].text == "POSTALE")
+    )
+
+
 def rural_route_line(tokens: list[TokenInfo]) -> bool:
     return bool(tokens) and (
         tokens[0].text in {"RR", "R.R."}
@@ -210,7 +217,7 @@ def looks_like_delivery(tokens: list[TokenInfo]) -> bool:
         return True
     if first.type == P.LPAREN and len(tokens) >= 2 and tokens[1].type in NUMERIC_TYPES:
         return True
-    if (first.text in PO_BOX_KEYWORDS | {"GD", "GENERAL"}
+    if (first.text in {"GD", "GENERAL"} or postal_box_line(tokens)
             or rural_route_line(tokens) or gen_del(tokens)
             or is_unit_designator(first.text) or unit_prefix(first.text)):
         return True
@@ -328,7 +335,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                 elif care_of(tokens):
                     self._set(care_of=" ".join(t.text for t in tokens[3:]))
                 elif tokens[0].text in {"SITE", "COMP", "EMPL"}:
-                    self._set(site_info=line.text)
+                    self._site(line)
                 elif looks_like_delivery(tokens):
                     self._delivery(line)
                 elif self.has_addressee and not addressee_seen:
@@ -448,7 +455,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
         first = tokens[0]
         if care_of(tokens):
             self._set(care_of=" ".join(t.text for t in tokens[3:]))
-        elif first.text in PO_BOX_KEYWORDS:
+        elif postal_box_line(tokens):
             self._set(address_type=AddressType.POSTAL_BOX)
             for token in tokens:
                 if token.type == P.NUMBER:
@@ -463,7 +470,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
         elif first.text in {"GD", "GENERAL"} or gen_del(tokens):
             self._set(address_type=AddressType.GENERAL_DELIVERY)
         elif first.text in {"SITE", "COMP", "EMPL"}:
-            self._set(site_info=line.text)
+            self._site(line)
         elif (
             not self.has_addressee
             and len(tokens) >= 3
@@ -498,6 +505,18 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                 self._set(address_type=AddressType.CIVIC)
         elif not self.components.care_of:
             self._set(care_of=line.text)
+
+    def _site(self, line: LineTokens) -> None:
+        tokens = line.tokens
+        for idx in range(1, len(tokens)):
+            suffix = tokens[idx:]
+            if rural_route_line(suffix):
+                prefix_length = 1 if suffix[0].text in {"RR", "R.R."} else 2
+                if len(suffix) > prefix_length and suffix[prefix_length].type == P.NUMBER:
+                    self._set(site_info=line_from_tokens(tokens[:idx]).text)
+                    self._delivery(line_from_tokens(suffix))
+                    return
+        self._set(site_info=line.text)
 
     def _civic(self, tokens: list[TokenInfo]) -> None:
         if unit_hyphen_civic(tokens):

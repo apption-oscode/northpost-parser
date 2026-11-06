@@ -545,6 +545,38 @@ class AddressParserTest {
     @DisplayName("Postal Box Address Parsing")
     class PostalBoxTests {
 
+        @ParameterizedTest
+        @ValueSource(strings = {"CP", "C.P", "C.P.", "CASE POSTALE", "case postale"})
+        void shouldParseFrenchPostalBoxVariants(String prefix) {
+            String delivery = prefix + " 2086";
+            var standalone = parser.parseAddress(delivery, false, false);
+            assertThat(standalone.components().postalBoxNumber()).isEqualTo("2086");
+            assertThat(standalone.components().addressType()).isEqualTo(AddressType.POSTAL_BOX);
+            for (String address : List.of(
+                    delivery + ", QUEBEC, QC",
+                    delivery + "\nQUEBEC QC",
+                    "ENTREPRISE\n" + delivery + "\nQUEBEC QC")) {
+                var result = parser.parseAddress(address);
+                assertThat(result.successful()).isTrue();
+                assertThat(result.components().postalBoxNumber()).isEqualTo("2086");
+                assertThat(result.components().addressType()).isEqualTo(AddressType.POSTAL_BOX);
+                assertThat(result.components().streetNumber()).isEmpty();
+                assertThat(result.components().careOf()).isEmpty();
+                assertThat(result.components().addressee())
+                        .isEqualTo(address.startsWith("ENTREPRISE") ? "ENTREPRISE" : "");
+                assertThat(result.components().municipality()).isEqualTo("QUEBEC");
+                assertThat(result.components().province()).isEqualTo("QC");
+            }
+        }
+
+        @Test
+        void shouldNotTreatCaseCompanyAsPostalBox() {
+            var result = parser.parseAddress("CASE COMPANY\n123 MAIN ST\nTORONTO ON");
+            assertThat(result.components().addressee()).isEqualTo("CASE COMPANY");
+            assertThat(result.components().postalBoxNumber()).isEmpty();
+            assertThat(result.components().addressType()).isEqualTo(AddressType.CIVIC);
+        }
+
         @Test
         @DisplayName("Should parse PO Box address")
         void shouldParsePoBoxAddress() {
@@ -597,6 +629,49 @@ class AddressParserTest {
     @Nested
     @DisplayName("Rural Address Parsing")
     class RuralAddressTests {
+
+        @Test
+        void shouldParseCombinedSiteAndRouteWithAddressee() {
+            var result = parser.parseAddress("FARM OWNER\nSITE 4 BOX 23 RR 5\nTORONTO ON M5V 2Y7");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().addressee()).isEqualTo("FARM OWNER");
+            assertThat(result.components().siteInfo()).isEqualTo("SITE 4 BOX 23");
+            assertThat(result.components().ruralRoute()).isEqualTo("5");
+            assertThat(result.components().addressType()).isEqualTo(AddressType.RURAL_ROUTE);
+            assertThat(result.components().postalCode()).isEqualTo("M5V 2Y7");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"RR", "R.R.", "R R", "R. R."})
+        void shouldParseRuralRouteOnSiteLine(String prefix) {
+            for (String site : List.of("SITE 4 BOX 23", "SITE 4 COMP 23", "COMP 23", "EMPL 4")) {
+                String delivery = site + " " + prefix + " 5";
+                for (String address : List.of(delivery, delivery + "\nTORONTO ON", delivery + ", TORONTO ON")) {
+                    var result = parser.parseAddress(address, false, false);
+                    assertThat(result.successful()).isTrue();
+                    assertThat(result.components().siteInfo()).isEqualTo(site);
+                    assertThat(result.components().ruralRoute()).isEqualTo("5");
+                    assertThat(result.components().addressType()).isEqualTo(AddressType.RURAL_ROUTE);
+                    assertThat(result.components().postalBoxNumber()).isEmpty();
+                    assertThat(result.components().streetNumber()).isEmpty();
+                    assertThat(result.components().addressee()).isEmpty();
+                    assertThat(result.components().postalCode()).isEmpty();
+                    if (!address.equals(delivery)) {
+                        assertThat(result.components().municipality()).isEqualTo("TORONTO");
+                        assertThat(result.components().province()).isEqualTo("ON");
+                    }
+                }
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"SITE 4 BOX 23", "SITE 4 BOX 23 RR", "SITE 4 BOX 23 R R"})
+        void shouldPreserveSiteWithoutValidRouteSuffix(String site) {
+            var result = parser.parseAddress(site + "\nTORONTO ON", false, true);
+            assertThat(result.components().siteInfo()).isEqualTo(site);
+            assertThat(result.components().ruralRoute()).isEmpty();
+            assertThat(result.components().postalBoxNumber()).isEmpty();
+        }
 
         @ParameterizedTest
         @ValueSource(strings = {"RR", "R.R.", "R R", "R. R.", "r r", "R\tR"})
