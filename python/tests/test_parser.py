@@ -35,6 +35,7 @@ def test_extraction_options(parser, has_addressee, has_postal_code, strategy):
     assert result.components.street_name == "MAIN"
     assert result.components.municipality == "TORONTO"
     assert result.components.province == "ON"
+    assert "Address may be incomplete for mailing purposes" not in result.warnings
     assert result.successful == (
         strategy is not ParsingStrategy.STRICT or (has_addressee and has_postal_code)
     )
@@ -46,6 +47,43 @@ def test_extraction_options(parser, has_addressee, has_postal_code, strategy):
     if strategy is ParsingStrategy.STRICT_THEN_LENIENT and not (has_addressee and has_postal_code):
         assert result.mode_used is ParsingMode.LENIENT
         assert any(w.startswith("Strict parsing failed:") for w in result.warnings)
+
+
+@pytest.mark.parametrize("has_addressee", [True, False])
+@pytest.mark.parametrize("has_postal_code", [True, False])
+def test_incomplete_warning_respects_expected_fields(parser, has_addressee, has_postal_code):
+    result = parser.parse_address(
+        "123 MAIN ST\nTORONTO ON",
+        has_addressee=has_addressee, has_postal_code=has_postal_code,
+    )
+    assert ("Address may be incomplete for mailing purposes" in result.warnings) == (
+        has_addressee or has_postal_code
+    )
+
+
+@pytest.mark.parametrize("address", [
+    "123 MAIN ST\nTORONTO",
+    "123 MAIN ST\nON",
+    "SITE 4 BOX 23\nTORONTO ON",
+])
+def test_disabled_fields_do_not_hide_missing_delivery_or_region(parser, address):
+    result = parser.parse_address(address, has_addressee=False, has_postal_code=False)
+    assert "Address may be incomplete for mailing purposes" in result.warnings
+
+
+def test_other_warnings_and_batch_respect_extraction_options(parser):
+    result = parser.parse_address(
+        "MAIN ST\nTORONTO ON\nCANADA", has_addressee=False, has_postal_code=False,
+    )
+    assert "Address may be incomplete for mailing purposes" not in result.warnings
+    assert "Street name provided without street number" in result.warnings
+    assert "Country specification is redundant for Canadian addresses" in result.warnings
+    batch = parser.parse_addresses(
+        ["123 MAIN ST\nTORONTO ON", "CP 23\nTORONTO ON", "RR 5\nTORONTO ON"],
+        has_addressee=False, has_postal_code=False,
+    )
+    assert all(not r.warnings for r in batch)
+    assert not parser.get_batch_statistics(batch).common_warnings
 
 
 @pytest.mark.parametrize("delivery", ["MAIN ST", "B-1565 MAIN ST", "R R 2"])
@@ -341,6 +379,19 @@ def test_site_without_valid_rural_route_suffix(parser, site):
     assert result.components.site_info == site
     assert result.components.rural_route == ""
     assert result.components.postal_box_number == ""
+
+
+def test_rural_route_with_care_of(parser):
+    result = parser.parse_address("C/O JOHN DORR\nRR 4\nOTTAWA, ON")
+    assert result.successful, result.errors
+    assert result.errors == ()
+    assert result.components.care_of == "JOHN DORR"
+    assert result.components.rural_route == "4"
+    assert result.components.address_type == AddressType.RURAL_ROUTE
+    assert result.components.municipality == "OTTAWA"
+    assert result.components.province == "ON"
+    assert result.components.addressee == ""
+    assert result.components.postal_code == ""
 
 
 def test_rural_route_on_site_line_with_addressee(parser):

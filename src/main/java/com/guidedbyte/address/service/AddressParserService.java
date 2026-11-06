@@ -129,8 +129,7 @@ public class AddressParserService {
         };
     }
 
-    private ParsingResult doParse(
-            String addressText, ParsingMode mode, boolean hasAddressee, boolean hasPostalCode) {
+    private ParsingResult doParse(String addressText, ParsingMode mode, boolean hasAddressee, boolean hasPostalCode) {
         CollectingErrorListener errorListener = new CollectingErrorListener();
         List<String> warnings = new ArrayList<>();
 
@@ -163,7 +162,7 @@ public class AddressParserService {
             AddressComponents components = visitor.visit(tree);
 
             // Validate and add warnings
-            warnings.addAll(validateComponents(components));
+            warnings.addAll(validateComponents(components, hasAddressee, hasPostalCode));
 
             // In strict mode, reject addresses that aren't complete for mailing
             if (mode == ParsingMode.STRICT && !components.isMailingValid()) {
@@ -196,7 +195,7 @@ public class AddressParserService {
     }
 
     /** Validate components and generate warnings */
-    private List<String> validateComponents(AddressComponents components) {
+    private List<String> validateComponents(AddressComponents components, boolean hasAddressee, boolean hasPostalCode) {
         List<String> warnings = new ArrayList<>();
 
         // Redundant country
@@ -205,7 +204,11 @@ public class AddressParserService {
         }
 
         // Incomplete for mailing
-        if (!components.isMailingValid()) {
+        if (!((!hasAddressee || components.hasAddressee())
+                && (components.hasStreetName() || components.hasPostalBoxNumber() || components.hasRuralRoute())
+                && components.hasMunicipality()
+                && components.hasProvince()
+                && (!hasPostalCode || components.hasPostalCode()))) {
             warnings.add("Address may be incomplete for mailing purposes");
         }
 
@@ -248,8 +251,7 @@ public class AddressParserService {
     }
 
     /** Batch parsing with optional addressee and postal-code extraction. */
-    public List<ParsingResult> parseAddresses(
-            List<String> addresses, boolean hasAddressee, boolean hasPostalCode) {
+    public List<ParsingResult> parseAddresses(List<String> addresses, boolean hasAddressee, boolean hasPostalCode) {
         return parseAddresses(addresses, ParsingStrategy.LENIENT, hasAddressee, hasPostalCode);
     }
 

@@ -89,6 +89,9 @@ empty and prevents province inference from it. Postal-code tokens can still be
 recognized structurally to separate address lines and municipality text.
 Strict mailing-validity requirements remain unchanged, so disabling either field
 causes strict parsing to reject an otherwise complete address.
+The incomplete-address warning respects these flags: intentionally omitted fields
+do not trigger it, but missing delivery, municipality, or province still do.
+Strict rejection errors and strict-to-lenient fallback warnings are unchanged.
 
 ## ANTLR generation
 

@@ -101,7 +101,9 @@ class AddressParserService:
             components = AddressComponentVisitor(
                 mode, has_addressee=has_addressee, has_postal_code=has_postal_code
             ).visit(tree)
-            warnings.extend(self._validate_components(components))
+            warnings.extend(self._validate_components(
+                components, has_addressee=has_addressee, has_postal_code=has_postal_code
+            ))
             if mode is ParsingMode.STRICT and not components.is_mailing_valid():
                 return ParsingResult(
                     components, False, tuple(self._build_strict_errors(components)),
@@ -131,11 +133,19 @@ class AddressParserService:
         return errors
 
     @staticmethod
-    def _validate_components(components: AddressComponents) -> list[str]:
+    def _validate_components(
+        components: AddressComponents, *, has_addressee: bool = True, has_postal_code: bool = True
+    ) -> list[str]:
         warnings = []
         if components.country:
             warnings.append("Country specification is redundant for Canadian addresses")
-        if not components.is_mailing_valid():
+        if not (
+            (not has_addressee or components.addressee)
+            and (components.street_name or components.postal_box_number or components.rural_route)
+            and components.municipality
+            and components.province
+            and (not has_postal_code or components.postal_code)
+        ):
             warnings.append("Address may be incomplete for mailing purposes")
         if (components.street_name and not components.street_number
                 and not components.postal_box_number and not components.rural_route):

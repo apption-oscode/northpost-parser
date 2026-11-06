@@ -1137,8 +1137,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
                                 || t.type == CanadianAddressParser.NUMBER
                                 || t.type == CanadianAddressParser.ALPHANUMERIC)) {
             builder.streetNumber(tokens.getLast().text);
-            builder.streetName(String.join(
-                    " ", collectStreetWords(tokens.subList(0, tokens.size() - 2), 0, null)));
+            builder.streetName(String.join(" ", collectStreetWords(tokens.subList(0, tokens.size() - 2), 0, null)));
             builder.streetType("");
             builder.streetDirection("");
             builder.addressType(AddressType.CIVIC);
@@ -1733,8 +1732,7 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
             if (isRuralRouteLine(suffix)) {
                 String first = suffix.get(0).text.toUpperCase();
                 int prefixLength = first.equals("RR") || first.equals("R.R.") ? 1 : 2;
-                if (suffix.size() > prefixLength
-                        && suffix.get(prefixLength).type == CanadianAddressParser.NUMBER) {
+                if (suffix.size() > prefixLength && suffix.get(prefixLength).type == CanadianAddressParser.NUMBER) {
                     builder.siteInfo(buildText(tokens.subList(0, idx)));
                     interpretRuralRouteLine(suffix);
                     return;

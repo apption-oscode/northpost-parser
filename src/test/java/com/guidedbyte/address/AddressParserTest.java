@@ -35,6 +35,7 @@ class AddressParserTest {
             assertThat(result.components().postalCode()).isEmpty();
             assertThat(result.components().municipality()).isEqualTo("TORONTO");
             assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.warnings()).doesNotContain("Address may be incomplete for mailing purposes");
             assertThat(result.warnings()).noneMatch(w -> w.contains("without street number"));
             var defaultResult = parser.parseAddress("BRIDGE ROAD, 5\nTORONTO, ON");
             assertThat(defaultResult.components().addressee()).isEqualTo("BRIDGE ROAD , 5");
@@ -86,24 +87,58 @@ class AddressParserTest {
         }
 
         @Test
+        void shouldWarnOnlyForExpectedMissingFields() {
+            for (boolean hasAddressee : List.of(true, false)) {
+                for (boolean hasPostalCode : List.of(true, false)) {
+                    var result = parser.parseAddress("123 MAIN ST\nTORONTO ON", hasAddressee, hasPostalCode);
+                    assertThat(result.warnings().contains("Address may be incomplete for mailing purposes"))
+                            .isEqualTo(hasAddressee || hasPostalCode);
+                }
+            }
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"123 MAIN ST\nTORONTO", "123 MAIN ST\nON", "SITE 4 BOX 23\nTORONTO ON"})
+        void shouldKeepWarningsForMissingDeliveryOrRegion(String address) {
+            var result = parser.parseAddress(address, false, false);
+            assertThat(result.warnings()).contains("Address may be incomplete for mailing purposes");
+        }
+
+        @Test
+        void shouldPreserveOtherWarningsAndAdjustBatchWarnings() {
+            var result = parser.parseAddress("MAIN ST\nTORONTO ON\nCANADA", false, false);
+            assertThat(result.warnings())
+                    .doesNotContain("Address may be incomplete for mailing purposes")
+                    .contains(
+                            "Street name provided without street number",
+                            "Country specification is redundant for Canadian addresses");
+            var batch = parser.parseAddresses(
+                    List.of("123 MAIN ST\nTORONTO ON", "CP 23\nTORONTO ON", "RR 5\nTORONTO ON"), false, false);
+            assertThat(batch).allSatisfy(r -> assertThat(r.warnings()).isEmpty());
+            assertThat(parser.getBatchStatistics(batch).commonWarnings()).isEmpty();
+        }
+
+        @Test
         void shouldParseSingleDeliveryLineWithoutAddressee() {
             var result = parser.parseAddress("123 MAIN ST", false, true);
             assertThat(result.components().addressee()).isEmpty();
             assertThat(result.components().streetNumber()).isEqualTo("123");
             assertThat(result.components().streetName()).isEqualTo("MAIN");
-            assertThat(parser.parseAddress("123 MAIN ST").components().addressee()).isEqualTo("123 MAIN ST");
+            assertThat(parser.parseAddress("123 MAIN ST").components().addressee())
+                    .isEqualTo("123 MAIN ST");
         }
 
         @ParameterizedTest
-        @ValueSource(strings = {
-            "M5V 2Y7",
-            "M5V2Y7",
-            "123 MAIN ST\nTORONTO ON M5V 2Y7",
-            "123 MAIN ST\nTORONTO ON\nM5V 2Y7",
-            "M5V 2Y7\n123 MAIN ST\nTORONTO ON",
-            "123 MAIN ST, TORONTO ON M5V 2Y7",
-            "123 MAIN ST\nTORONTO M5V 2Y7"
-        })
+        @ValueSource(
+                strings = {
+                    "M5V 2Y7",
+                    "M5V2Y7",
+                    "123 MAIN ST\nTORONTO ON M5V 2Y7",
+                    "123 MAIN ST\nTORONTO ON\nM5V 2Y7",
+                    "M5V 2Y7\n123 MAIN ST\nTORONTO ON",
+                    "123 MAIN ST, TORONTO ON M5V 2Y7",
+                    "123 MAIN ST\nTORONTO M5V 2Y7"
+                })
         void shouldSuppressPostalCodeWithoutChangingRegion(String address) {
             var result = parser.parseAddress(address, true, false);
             assertThat(result.successful()).isTrue();
@@ -120,8 +155,7 @@ class AddressParserTest {
         void shouldApplyFlagsToBatchWithoutChangingDefaults() {
             String address = "123 MAIN ST\nTORONTO ON M5V 2Y7";
             var results = parser.parseAddresses(
-                    List.of(address, address), AddressParserService.ParsingStrategy.STRICT_THEN_LENIENT,
-                    false, false);
+                    List.of(address, address), AddressParserService.ParsingStrategy.STRICT_THEN_LENIENT, false, false);
             assertThat(results).hasSize(2);
             for (var result : results) {
                 assertThat(result.successful()).isTrue();
@@ -130,7 +164,10 @@ class AddressParserTest {
                 assertThat(result.components().postalCode()).isEmpty();
             }
             assertThat(parser.parseAddress(address).components().postalCode()).isEqualTo("M5V 2Y7");
-            assertThat(parser.parseAddresses(List.of(address), false, false).get(0).components().postalCode())
+            assertThat(parser.parseAddresses(List.of(address), false, false)
+                            .get(0)
+                            .components()
+                            .postalCode())
                     .isEmpty();
         }
     }
@@ -553,9 +590,7 @@ class AddressParserTest {
             assertThat(standalone.components().postalBoxNumber()).isEqualTo("2086");
             assertThat(standalone.components().addressType()).isEqualTo(AddressType.POSTAL_BOX);
             for (String address : List.of(
-                    delivery + ", QUEBEC, QC",
-                    delivery + "\nQUEBEC QC",
-                    "ENTREPRISE\n" + delivery + "\nQUEBEC QC")) {
+                    delivery + ", QUEBEC, QC", delivery + "\nQUEBEC QC", "ENTREPRISE\n" + delivery + "\nQUEBEC QC")) {
                 var result = parser.parseAddress(address);
                 assertThat(result.successful()).isTrue();
                 assertThat(result.components().postalBoxNumber()).isEqualTo("2086");
@@ -629,6 +664,21 @@ class AddressParserTest {
     @Nested
     @DisplayName("Rural Address Parsing")
     class RuralAddressTests {
+
+        @Test
+        @DisplayName("Should extract rural route after a care-of line")
+        void shouldParseRuralRouteWithCareOf() {
+            var result = parser.parseAddress("C/O JOHN DORR\nRR 4\nOTTAWA, ON");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.errors()).isEmpty();
+            assertThat(result.components().careOf()).isEqualTo("JOHN DORR");
+            assertThat(result.components().ruralRoute()).isEqualTo("4");
+            assertThat(result.components().addressType()).isEqualTo(AddressType.RURAL_ROUTE);
+            assertThat(result.components().municipality()).isEqualTo("OTTAWA");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().addressee()).isEmpty();
+            assertThat(result.components().postalCode()).isEmpty();
+        }
 
         @Test
         void shouldParseCombinedSiteAndRouteWithAddressee() {
@@ -2065,17 +2115,17 @@ class AddressParserTest {
         }
 
         @ParameterizedTest
-        @ValueSource(strings = {
-            "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
-            "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
-        })
+        @ValueSource(
+                strings = {
+                    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+                    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"
+                })
         @DisplayName("Should parse single-letter units with or without an addressee")
         void shouldParseSingleLetterUnitHyphenCivic(String unit) {
             String number = unit.equals("B") ? "1565" : "712";
             for (String addressee : List.of("", "TEST PERSON\n")) {
-                var result = parser.parseAddress(
-                        addressee + unit.toLowerCase(java.util.Locale.ROOT) + "-" + number
-                                + " MAIN ST\nTORONTO ON M5V 2Y7");
+                var result = parser.parseAddress(addressee + unit.toLowerCase(java.util.Locale.ROOT) + "-" + number
+                        + " MAIN ST\nTORONTO ON M5V 2Y7");
                 assertThat(result.successful()).isTrue();
                 assertThat(result.components().unitNumber()).isEqualTo(unit);
                 assertThat(result.components().streetNumber()).isEqualTo(number);
