@@ -13,6 +13,11 @@ A Canadian postal address parser that converts free-form address text into struc
 
 Pure Java library with no framework dependencies. Validated against **9.6 million+** [Statistics Canada ODA](https://www.statcan.gc.ca/en/lode/databases/oda) and **16.4 million+** [Statistics Canada NAR](https://www150.statcan.gc.ca/n1/pub/46-26-0002/462600022022001-eng.htm) addresses with a **100% parse success rate** and **99.99% true field-level accuracy**.
 
+A standalone [Python Poetry project](python/README.md) is also available in
+[`python/`](python/), with a Python port of the library and ANTLR4-generated
+Python sources from the same grammar. The Java project and build remain unchanged.
+The large-dataset validation figures above describe the Java implementation.
+
 ## Installation
 
 ### Gradle
