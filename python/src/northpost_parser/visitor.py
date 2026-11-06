@@ -173,6 +173,18 @@ def country_line(line: LineTokens) -> bool:
     return len(line.tokens) == 1 and line.tokens[0].text in COUNTRY_KEYWORDS
 
 
+def unit_hyphen_civic(tokens: list[TokenInfo]) -> bool:
+    return (
+        len(tokens) >= 3
+        and tokens[1].type == P.HYPHEN
+        and tokens[2].type == P.NUMBER
+        and (
+            tokens[0].type in NUMERIC_TYPES
+            or (tokens[0].type == P.WORD and tokens[0].text == "PH")
+        )
+    )
+
+
 def looks_like_delivery(tokens: list[TokenInfo]) -> bool:
     if not tokens:
         return False
@@ -423,6 +435,8 @@ class AddressComponentVisitor(CanadianAddressVisitor):
             self._set(address_type=AddressType.GENERAL_DELIVERY)
         elif first.text in {"SITE", "COMP", "EMPL"}:
             self._set(site_info=line.text)
+        elif unit_hyphen_civic(tokens):
+            self._civic(tokens)
         elif is_unit_designator(first.text):
             self._leading_unit(tokens)
         elif split := unit_prefix(first.text):
@@ -444,8 +458,7 @@ class AddressComponentVisitor(CanadianAddressVisitor):
             self._set(care_of=line.text)
 
     def _civic(self, tokens: list[TokenInfo]) -> None:
-        if (len(tokens) >= 3 and tokens[0].type == P.NUMBER
-                and tokens[1].type == P.HYPHEN and tokens[2].type == P.NUMBER):
+        if unit_hyphen_civic(tokens):
             self._set(unit_number=tokens[0].text, street_number=tokens[2].text)
             idx = 3
         else:

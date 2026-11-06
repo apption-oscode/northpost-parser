@@ -145,7 +145,7 @@ ALPHANUMERIC
 // This means street types, province names, unit designators, and all other
 // keywords are lexed as WORD — the visitor distinguishes them semantically.
 WORD
-    : LETTER (LETTER | [0-9] | '\'' | '\u2019' | '-' | '.')*
+    : LETTER (LETTER | [0-9] | '\'' | '\u2019' | '-' LETTER | '.')*
     ;
 
 fragment LETTER
