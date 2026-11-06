@@ -1112,6 +1112,13 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
             return;
         }
 
+        // A hyphenated unit-civic form takes precedence over interpreting PH as a
+        // unit designator (e.g., PH-456 means unit PH at civic number 456).
+        if (isUnitHyphenCivicPattern(tokens)) {
+            interpretCivicLine(tokens);
+            return;
+        }
+
         // Check if line starts with a unit designator (APT 5, APT. 5, etc.)
         if (isUnitDesignator(firstText)) {
             interpretCivicLineWithLeadingUnit(tokens);
@@ -1173,14 +1180,24 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
 
     // ---- Delivery line sub-interpreters ----
 
+    private static boolean isUnitHyphenCivicPattern(List<TokenInfo> tokens) {
+        if (tokens.size() < 3
+                || tokens.get(1).type != CanadianAddressParser.HYPHEN
+                || tokens.get(2).type != CanadianAddressParser.NUMBER) {
+            return false;
+        }
+
+        TokenInfo unit = tokens.get(0);
+        return unit.type == CanadianAddressParser.NUMBER
+                || unit.type == CanadianAddressParser.ALPHANUMERIC
+                || (unit.type == CanadianAddressParser.WORD && unit.text.equalsIgnoreCase("PH"));
+    }
+
     private void interpretCivicLine(List<TokenInfo> tokens) {
         int idx;
 
-        // Check for unit-hyphen-civic pattern: 10-123 (NUMBER HYPHEN NUMBER)
-        if (tokens.size() >= 3
-                && tokens.get(0).type == CanadianAddressParser.NUMBER
-                && tokens.get(1).type == CanadianAddressParser.HYPHEN
-                && tokens.get(2).type == CanadianAddressParser.NUMBER) {
+        // Check for unit-hyphen-civic patterns: 10-123, 5B-456, or PH-456.
+        if (isUnitHyphenCivicPattern(tokens)) {
             builder.unitNumber(tokens.get(0).text);
             builder.streetNumber(tokens.get(2).text);
             idx = 3;

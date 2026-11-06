@@ -129,6 +129,16 @@ NUMBER
     : [0-9]+
     ;
 
+// Mixed letter/digit sequences (e.g., 2Y7 for the second half of a spaced
+// postal code, 1ST/2ND/3RD for ordinal street names, 123A for civic number
+// suffixes, or B15/5A for unit numbers). Requires both a letter and a digit,
+// so ordinary words remain WORD tokens. It precedes WORD to win equal-length
+// matches for letter-leading codes.
+ALPHANUMERIC
+    : LETTER (LETTER | [0-9])* [0-9] (LETTER | [0-9])*
+    | [0-9] (LETTER | [0-9])* LETTER (LETTER | [0-9])*
+    ;
+
 // Text words — includes hyphenated names (O'Brien, Saint-Jean-sur-Richelieu,
 // Ste-Anne-de-Bellevue) and dotted abbreviations (P.O., R.R., St., Ave.)
 // because the characters are consumed greedily after an initial letter.
@@ -136,14 +146,6 @@ NUMBER
 // keywords are lexed as WORD — the visitor distinguishes them semantically.
 WORD
     : LETTER (LETTER | [0-9] | '\'' | '\u2019' | '-' | '.')*
-    ;
-
-// Digit-leading alphanumeric sequences (e.g., 2Y7 for the second half of a
-// spaced postal code, or 1ST/2ND/3RD for ordinal street names, or 123A for
-// civic number with suffix). Matches when a digit-start token contains letters,
-// beating NUMBER on length.
-ALPHANUMERIC
-    : (LETTER | [0-9])+
     ;
 
 fragment LETTER

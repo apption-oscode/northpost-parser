@@ -1848,6 +1848,46 @@ class AddressParserTest {
             assertThat(result.components().streetName()).isEqualTo("MAIN");
             assertThat(result.components().streetType()).isEqualTo("ST");
         }
+
+        @Test
+        @DisplayName("Should parse digit-leading alphanumeric unit before hyphenated civic number")
+        void shouldParseDigitLeadingAlphanumericUnitHyphenCivic() {
+            var result = parser.parseAddress("5B-456 ELM AVE\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("5B");
+            assertThat(result.components().streetNumber()).isEqualTo("456");
+            assertThat(result.components().streetName()).isEqualTo("ELM");
+            assertThat(result.components().streetType()).isEqualTo("AVE");
+        }
+
+        @Test
+        @DisplayName("Should parse letter-leading alphanumeric unit before hyphenated civic number")
+        void shouldParseLetterLeadingAlphanumericUnitHyphenCivic() {
+            var result = parser.parseAddress("B5-456 ELM AVE\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("B5");
+            assertThat(result.components().streetNumber()).isEqualTo("456");
+            assertThat(result.components().streetName()).isEqualTo("ELM");
+            assertThat(result.components().streetType()).isEqualTo("AVE");
+        }
+
+        @Test
+        @DisplayName("Should parse PH-prefixed unit before hyphenated civic number")
+        void shouldParsePhPrefixedUnitHyphenCivic() {
+            var result = parser.parseAddress("PH5-456 ELM AVE\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("PH5");
+            assertThat(result.components().streetNumber()).isEqualTo("456");
+            assertThat(result.components().streetName()).isEqualTo("ELM");
+            assertThat(result.components().streetType()).isEqualTo("AVE");
+        }
+
+        @Test
+        @DisplayName("Should parse PH unit before hyphenated civic number")
+        void shouldParsePhUnitHyphenCivic() {
+            var result = parser.parseAddress("PH-456 ELM AVE\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("PH");
+            assertThat(result.components().streetNumber()).isEqualTo("456");
+            assertThat(result.components().streetName()).isEqualTo("ELM");
+            assertThat(result.components().streetType()).isEqualTo("AVE");
+        }
     }
 
     @Nested
@@ -1865,7 +1905,7 @@ class AddressParserTest {
         }
 
         @Test
-        @DisplayName("Should parse alphanumeric code unit (B15)")
+        @DisplayName("Should parse letter-leading alphanumeric unit (B15)")
         void shouldParseAlphanumericCodeUnit() {
             var result = parser.parseAddress("APT B15 20 DUVAR CRT\nCHARLOTTETOWN PE C1A 1A1");
             assertThat(result.components().unitNumber()).isEqualTo("B15");
@@ -1885,7 +1925,7 @@ class AddressParserTest {
         }
 
         @Test
-        @DisplayName("Should parse digit-alpha unit (5A)")
+        @DisplayName("Should parse digit-leading unit ending in a letter (5A)")
         void shouldParseDigitAlphaUnit() {
             var result = parser.parseAddress("APT 5A 394 QUEEN ST\nTORONTO ON M5V 2Y7");
             assertThat(result.components().unitNumber()).isEqualTo("5A");
@@ -1974,6 +2014,30 @@ class AddressParserTest {
             var result = parser.parseAddress("APT PH01 5 STRAWBERRY LANE\nTORONTO ON M5V 2Y7");
             assertThat(result.components().unitNumber()).isEqualTo("PH01");
             assertThat(result.components().streetNumber()).isEqualTo("5");
+        }
+
+        @Test
+        @DisplayName("Should parse PH as a unit number")
+        void shouldParsePhUnitNumber() {
+            var result = parser.parseAddress("APT PH 5 STRAWBERRY LANE\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("PH");
+            assertThat(result.components().streetNumber()).isEqualTo("5");
+        }
+
+        @Test
+        @DisplayName("Should parse RM as a unit designator")
+        void shouldParseRoomDesignator() {
+            var result = parser.parseAddress("RM 12 5 MAIN ST\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("12");
+            assertThat(result.components().streetNumber()).isEqualTo("5");
+        }
+
+        @Test
+        @DisplayName("Should parse STE as a unit designator")
+        void shouldParseSteDesignator() {
+            var result = parser.parseAddress("STE 200 123 MAIN ST\nTORONTO ON M5V 2Y7");
+            assertThat(result.components().unitNumber()).isEqualTo("200");
+            assertThat(result.components().streetNumber()).isEqualTo("123");
         }
     }
 }
