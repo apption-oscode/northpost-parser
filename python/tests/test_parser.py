@@ -149,6 +149,27 @@ def test_batch_extraction_options(parser):
     assert parser.parse_address(address).components.postal_code == "M5V 2Y7"
 
 
+def test_french_civic_number_comma_keeps_street_in_delivery(parser):
+    result = parser.parse_address("123, RUE PRINCIPALE, MONTRÉAL QC H3B 1A1")
+    assert result.successful, result.errors
+    assert result.components.street_number == "123"
+    assert result.components.street_name == "PRINCIPALE"
+    assert result.components.street_type == "RUE"
+    assert result.components.municipality == "MONTRÉAL"
+    assert result.components.province == "QC"
+
+
+@pytest.mark.parametrize("address", [
+    "JOHN SMITH\n1875 LAKESHORE RD\nNIAGARA ON THE LAKE ON  L0S 1J0",
+    "JOHN SMITH\n6 SEYVAL PL\nNIAGARA ON THE LAKE ON L0S1J0",
+])
+def test_province_nearest_postal_code_wins_over_municipality_code(parser, address):
+    result = parser.parse_address(address)
+    assert result.successful, result.errors
+    assert result.components.municipality == "NIAGARA ON THE LAKE"
+    assert result.components.province == "ON"
+
+
 def oda_cases():
     path = Path(__file__).resolve().parents[2] / "src/test/resources/oda_test_addresses.csv"
     with path.open(encoding="utf-8") as source:
@@ -231,7 +252,7 @@ def test_french_article_province_guard(parser, province, kind):
     ("APT 5 123 MAIN ST", "5", "123"),
     ("APT A 123 MAIN ST", "A", "123"),
     ("APT 5A 123 MAIN ST", "5A", "123"),
-    ("APT 123 MAIN ST", "", "123"),
+    ("APT 123 MAIN ST", "123", ""),
     ("APT5 123 MAIN ST", "5", "123"),
     ("APT.5 123 MAIN ST", "5", "123"),
     ("STE200 123 MAIN ST", "200", "123"),
@@ -254,7 +275,7 @@ def test_french_article_province_guard(parser, province, kind):
     ("123/125 MAIN ST", "", "123/125"),
     ("(123) MAIN ST", "", "123"),
     ("123A MAIN ST", "", "123A"),
-    ("APT A-101 5300 BIG WHITE RD", "A-101","5300")
+    ("APT A-101 123 MAIN ST", "A-101", "123"),
 ])
 def test_civic_and_units(parser, delivery, unit, number):
     result = parser.parse_address(f"TEST PERSON\n{delivery}\nTORONTO ON M5V 2Y7")
@@ -263,6 +284,38 @@ def test_civic_and_units(parser, delivery, unit, number):
     assert result.components.street_number == number
     assert result.components.street_name == "MAIN"
     assert result.components.street_type == "ST"
+
+
+@pytest.mark.parametrize("unit", ["A-101", "A-101-B2", "101-A", "123", "ABC", "A101"])
+@pytest.mark.parametrize("number", ["", "5300"])
+def test_leading_unit_identifier_with_or_without_civic(parser, unit, number):
+    delivery = f"APT {unit}" + (f" {number} " if number else " ")
+    result = parser.parse_address(f"TEST PERSON\n{delivery}BIG WHITE RD\nTORONTO ON M5V 2Y7")
+    assert result.successful, result.errors
+    assert result.components.unit_number == unit
+    assert result.components.street_number == number
+    assert result.components.street_name == "BIG WHITE"
+    assert result.components.street_type == "RD"
+
+
+@pytest.mark.parametrize(("delivery", "region", "unit", "number", "name", "kind", "city"), [
+    ("APT A-101, 123 MAIN ST", "TORONTO ON M5V 2Y7", "A-101", "123", "MAIN", "ST", "TORONTO"),
+    ("SUITE 200, 123 MAIN ST", "TORONTO ON M5V 2Y7", "200", "123", "MAIN", "ST", "TORONTO"),
+    ("APT A, 123 MAIN ST", "TORONTO ON M5V 2Y7", "A", "123", "MAIN", "ST", "TORONTO"),
+    ("APT 5A, 123 MAIN ST", "TORONTO ON M5V 2Y7", "5A", "123", "MAIN", "ST", "TORONTO"),
+    ("APP 4, 123 MAIN ST", "TORONTO ON M5V 2Y7", "4", "123", "MAIN", "ST", "TORONTO"),
+    ("APP 1/2, 123 MAIN ST", "TORONTO ON M5V 2Y7", "1/2", "123", "MAIN", "ST", "TORONTO"),
+    ("APP 4, 123, RUE PRINCIPALE", "MONTRÉAL QC H3B 1A1",
+     "4", "123", "PRINCIPALE", "RUE", "MONTRÉAL"),
+])
+def test_leading_unit_comma_separators(parser, delivery, region, unit, number, name, kind, city):
+    result = parser.parse_address(f"TEST PERSON\n{delivery}\n{region}")
+    assert result.successful, result.errors
+    assert result.components.unit_number == unit
+    assert result.components.street_number == number
+    assert result.components.street_name == name
+    assert result.components.street_type == kind
+    assert result.components.municipality == city
 
 
 @pytest.mark.parametrize("unit", list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"))

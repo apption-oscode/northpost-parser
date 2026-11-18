@@ -49,6 +49,7 @@ implementation("com.guidedbyte:northpost-parser:1.1.0")
 - **Smart disambiguation** — French type-first detection (RUE PRINCIPALE), lettered avenues (AVENUE P), opposing direction pairs (EAST WEST RD), French article prefixes (GRANDE ALLEE), type-as-name guard (AVENUE RD → name=AVENUE, type=RD)
 - **Preserves what you write** — hyphens (2E-ET-3E), slashes (36/37), ampersands (6 & 10), spaced dashes (RD - RTE 113), and parentheses (DRIVEWAY (THE)) retained in street names
 - **All delivery types** — civic addresses, PO boxes (PO BOX / CP / C.P / C.P. / CASE POSTALE), rural routes (RR), general delivery (GD), and mixed
+- **Flexible unit numbers** — supports numeric, alphanumeric, hyphenated, fractional, and dotted units. After a leading designator such as `APT`, the next value made up of letters, digits, or hyphens is always the unit number: `APT A-101 5300 BIG WHITE RD` gives unit `A-101` and civic number `5300`; `APT 123 MAIN ST` gives unit `123` with no civic number.
 - **Flexible input** — handles multi-line (Canada Post format), single-line with commas, lowercase, extra whitespace, accented characters, and various abbreviations
 - **Three parsing modes** — `LENIENT` (extract what's available), `STRICT` (reject incomplete addresses), and `AUTO` (try strict, fall back to lenient)
 - **Zero framework dependencies** — depends only on ANTLR runtime and SLF4J

@@ -1277,29 +1277,22 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
                 builder.unitNumber(compound.text);
                 idx = afterCompound;
             }
-            // else: no following civic — fall through to existing single-token logic
+            // Without a following civic, retain the existing fractional civic interpretation.
         }
 
-        // Existing single-token heuristic (only if compound didn't consume)
         if (idx == 1) {
-            TokenInfo candidate = tokens.get(idx);
-            int afterCandidate = skipCommas(tokens, idx + 1);
-            boolean hasFollowingCivic = afterCandidate < tokens.size()
-                    && (tokens.get(afterCandidate).type == CanadianAddressParser.NUMBER
-                            || tokens.get(afterCandidate).type == CanadianAddressParser.ALPHANUMERIC);
-
-            if (candidate.type == CanadianAddressParser.ALPHANUMERIC) {
-                // Digit-starting mixed token (5A, 2B) — always a unit identifier when designator is present
-                builder.unitNumber(candidate.text);
-                idx = afterCandidate;
-            } else if ((candidate.type == CanadianAddressParser.WORD || candidate.type == CanadianAddressParser.NUMBER)
-                    && hasFollowingCivic) {
-                // WORD or NUMBER followed by civic number → unit value (APT A 394, APT 5 394, APP 4, 123)
-                builder.unitNumber(candidate.text);
-                idx = afterCandidate;
+            int end = idx + 1;
+            StringBuilder unit = new StringBuilder(tokens.get(idx).text);
+            while (end < tokens.size()
+                    && tokens.get(end).type != CanadianAddressParser.COMMA
+                    && areAdjacent(tokens.get(end - 1), tokens.get(end))) {
+                unit.append(tokens.get(end).text);
+                end++;
             }
-            // else: single NUMBER with no following civic → it IS the civic (APT 394 QUEEN ST)
-            // else: WORD with no following civic → fall through to street parsing (APT QUEEN ST)
+            if (unit.chars().allMatch(c -> Character.isLetterOrDigit(c) || c == '-')) {
+                builder.unitNumber(unit.toString());
+                idx = skipCommas(tokens, end);
+            }
         }
 
         // Next should be the civic/street number

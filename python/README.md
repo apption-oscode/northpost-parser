@@ -83,6 +83,16 @@ When addressee extraction is disabled, unanchored lines are interpreted as
 delivery information instead. A civic address must put the civic number before
 the street name; a street name followed by a comma and number (for example,
 `BRIDGE ROAD, 5`) is not parsed as a civic address.
+Leading unit values may be comma-separated from the civic number, as in
+`SUITE 200, 123 MAIN ST` or `APP 4, 123, RUE PRINCIPALE`.
+After a leading unit designator, the next value containing letters, digits, or
+hyphens is always the unit number, even without a following civic number.
+`APT A-101 5300 BIG WHITE RD` has unit `A-101` and civic number `5300`;
+`APT 123 MAIN ST` has unit `123` and no civic number.
+French civic-number commas are supported, and commas after civic or unit
+numbers do not split the delivery line from the region. Province detection
+scans from right to left, preserving municipality names such as
+`NIAGARA ON THE LAKE` when the province code also appears in the name.
 Disabling postal-code extraction leaves that field
 empty and prevents province inference from it. Postal-code tokens can still be
 recognized structurally to separate address lines and municipality text.

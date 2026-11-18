@@ -26,10 +26,7 @@ class AddressParserTest {
         @Test
         void shouldRejectStreetNameBeforeCommaSeparatedCivicNumber() {
             var result = parser.parseAddress(
-                    "BRIDGE ROAD, 5\nTORONTO, ON M5V 2Y7",
-                    AddressParserService.ParsingStrategy.STRICT,
-                    false,
-                    false);
+                    "BRIDGE ROAD, 5\nTORONTO, ON M5V 2Y7", AddressParserService.ParsingStrategy.STRICT, false, false);
             assertThat(result.successful()).isFalse();
             assertThat(result.components().streetNumber()).isEmpty();
         }
@@ -2180,6 +2177,21 @@ class AddressParserTest {
     @DisplayName("Compound Unit Value Parsing")
     class CompoundUnitValueTests {
 
+        @ParameterizedTest
+        @ValueSource(strings = {"A-101", "A-101-B2", "101-A", "123", "ABC", "A101"})
+        @DisplayName("Should consume the value after a unit designator with or without a civic number")
+        void shouldParseLeadingUnitIdentifier(String unit) {
+            for (String number : List.of("", "5300")) {
+                String delivery = "APT " + unit + (number.isEmpty() ? " " : " " + number + " ");
+                var result = parser.parseAddress("TEST PERSON\n" + delivery + "BIG WHITE RD\nTORONTO ON M5V 2Y7");
+                assertThat(result.successful()).isTrue();
+                assertThat(result.components().unitNumber()).isEqualTo(unit);
+                assertThat(result.components().streetNumber()).isEqualTo(number);
+                assertThat(result.components().streetName()).isEqualTo("BIG WHITE");
+                assertThat(result.components().streetType()).isEqualTo("RD");
+            }
+        }
+
         @Test
         @DisplayName("Should parse fractional unit (1/2)")
         void shouldParseFractionalUnit() {
@@ -2230,11 +2242,11 @@ class AddressParserTest {
         }
 
         @Test
-        @DisplayName("Regression: bare designator number is civic, not unit")
+        @DisplayName("Regression: bare designator number is a unit")
         void regressionBareDesignatorNumber() {
             var result = parser.parseAddress("APT 394 QUEEN ST\nTORONTO ON M5V 2Y7");
-            assertThat(result.components().unitNumber()).isEmpty();
-            assertThat(result.components().streetNumber()).isEqualTo("394");
+            assertThat(result.components().unitNumber()).isEqualTo("394");
+            assertThat(result.components().streetNumber()).isEmpty();
             assertThat(result.components().streetName()).isEqualTo("QUEEN");
             assertThat(result.components().streetType()).isEqualTo("ST");
         }
@@ -2377,11 +2389,11 @@ class AddressParserTest {
         }
 
         @Test
-        @DisplayName("Should treat bare designator number as civic, not unit")
-        void shouldTreatBareDesignatorNumberAsCivic() {
+        @DisplayName("Should treat bare designator number as unit, not civic")
+        void shouldTreatBareDesignatorNumberAsUnit() {
             var result = parser.parseAddress("APT 394 QUEEN ST\nTORONTO ON M5V 2Y7");
-            assertThat(result.components().unitNumber()).isEmpty();
-            assertThat(result.components().streetNumber()).isEqualTo("394");
+            assertThat(result.components().unitNumber()).isEqualTo("394");
+            assertThat(result.components().streetNumber()).isEmpty();
             assertThat(result.components().streetName()).isEqualTo("QUEEN");
             assertThat(result.components().streetType()).isEqualTo("ST");
         }
@@ -2390,10 +2402,10 @@ class AddressParserTest {
         @DisplayName("Should handle bare designator with no civic number")
         void shouldHandleBareDesignatorNoCivic() {
             var result = parser.parseAddress("APT QUEEN ST\nTORONTO ON M5V 2Y7");
-            assertThat(result.components().unitNumber()).isEmpty();
+            assertThat(result.components().unitNumber()).isEqualTo("QUEEN");
             assertThat(result.components().streetNumber()).isEmpty();
-            assertThat(result.components().streetName()).isEqualTo("QUEEN");
-            assertThat(result.components().streetType()).isEqualTo("ST");
+            assertThat(result.components().streetName()).isEqualTo("ST");
+            assertThat(result.components().streetType()).isEmpty();
         }
 
         @Test

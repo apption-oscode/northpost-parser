@@ -142,6 +142,25 @@ def adjacent(first: TokenInfo, second: TokenInfo) -> bool:
     return first.stop + 1 == second.start
 
 
+def skip_commas(tokens: list[TokenInfo], idx: int) -> int:
+    while idx < len(tokens) and tokens[idx].type == P.COMMA:
+        idx += 1
+    return idx
+
+
+def is_civic_number_segment(segment: list[TokenInfo]) -> bool:
+    has_number = False
+    for idx, token in enumerate(segment):
+        if token.type in NUMERIC_TYPES:
+            has_number = True
+        elif token.type == P.WORD:
+            if idx != 0 or not is_unit_designator(token.text):
+                return False
+        elif token.type not in {P.HYPHEN, P.SLASH, P.COMMA}:
+            return False
+    return has_number
+
+
 def care_of(tokens: list[TokenInfo]) -> bool:
     return (len(tokens) >= 3 and tokens[1].type == P.SLASH
             and (tokens[0].text, tokens[2].text) in {("C", "O"), ("A", "S")})
@@ -366,12 +385,12 @@ class AddressComponentVisitor(CanadianAddressVisitor):
 
     def _comma_split(self, line: LineTokens) -> list[LineTokens] | None:
         tokens = line.tokens
-        for i, token in enumerate(tokens):
-            if token.type != P.COMMA:
+        commas = [i for i, token in enumerate(tokens) if token.type == P.COMMA]
+        for comma_idx, i in enumerate(commas):
+            after = skip_commas(tokens, i + 1)
+            segment_start = 0 if comma_idx == 0 else commas[comma_idx - 1] + 1
+            if is_civic_number_segment(tokens[segment_start:i]):
                 continue
-            after = i + 1
-            while after < len(tokens) and tokens[after].type == P.COMMA:
-                after += 1
             marker = any(
                 (t.type == P.WORD and (
                     t.text in PROVINCE_CODES or t.text in PROVINCE_NAMES
@@ -408,17 +427,13 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                     break
         province = None
         province_start = province_end = -1
-        for i, token in enumerate(tokens):
+        for i in range(len(tokens) - 1, -1, -1):
+            token = tokens[i]
             if pc_start <= i <= pc_end:
                 continue
             if token.type == P.WORD and token.text in PROVINCE_CODES:
                 province, province_start, province_end = token.text, i, i
-                break
-        if province is None:
-            scan_end = pc_start if pc_start >= 0 else len(tokens)
-            for i in range(scan_end - 1, -1, -1):
-                if tokens[i].type != P.WORD:
-                    continue
+            elif token.type == P.WORD:
                 for name, code in PROVINCE_NAMES.items():
                     parts = name.split()
                     start = i - len(parts) + 1
@@ -431,8 +446,8 @@ class AddressComponentVisitor(CanadianAddressVisitor):
                     ):
                         province, province_start, province_end = code, start, i
                         break
-                if province:
-                    break
+            if province:
+                break
         if province:
             self._set(province=province)
         country = -1
@@ -536,20 +551,24 @@ class AddressComponentVisitor(CanadianAddressVisitor):
         idx = 1
         if idx >= len(tokens):
             return
-        if (idx + 3 < len(tokens) and tokens[idx].type == P.NUMBER
+        if (idx + 2 < len(tokens) and tokens[idx].type == P.NUMBER
                 and tokens[idx + 1].type in {P.SLASH, P.HYPHEN, P.DOT}
                 and tokens[idx + 2].type == P.NUMBER
                 and adjacent(tokens[idx], tokens[idx + 1])
-                and adjacent(tokens[idx + 1], tokens[idx + 2])
-                and tokens[idx + 3].type in NUMERIC_TYPES):
-            self._set(unit_number="".join(t.text for t in tokens[idx:idx + 3]))
-            idx += 3
+                and adjacent(tokens[idx + 1], tokens[idx + 2])):
+            after_compound = skip_commas(tokens, idx + 3)
+            if after_compound < len(tokens) and tokens[after_compound].type in NUMERIC_TYPES:
+                self._set(unit_number="".join(t.text for t in tokens[idx:idx + 3]))
+                idx = after_compound
         if idx == 1:
-            candidate = tokens[idx]
-            following_civic = idx + 1 < len(tokens) and tokens[idx + 1].type in NUMERIC_TYPES
-            if candidate.type == P.ALPHANUMERIC or (candidate.type in {P.WORD, P.NUMBER} and following_civic):
-                self._set(unit_number=candidate.text)
-                idx += 1
+            end = idx + 1
+            while (end < len(tokens) and tokens[end].type != P.COMMA
+                   and adjacent(tokens[end - 1], tokens[end])):
+                end += 1
+            unit = "".join(token.text for token in tokens[idx:end])
+            if all(char.isalnum() or char == "-" for char in unit):
+                self._set(unit_number=unit)
+                idx = skip_commas(tokens, end)
         if idx < len(tokens) and tokens[idx].type in NUMERIC_TYPES:
             self._set(street_number=tokens[idx].text, address_type=AddressType.CIVIC)
             idx = self._post_civic(tokens, idx + 1)
