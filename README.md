@@ -23,13 +23,13 @@ The large-dataset validation figures above describe the Java implementation.
 ### Gradle
 
 ```groovy
-implementation 'com.guidedbyte:northpost-parser:1.0.0'
+implementation 'com.guidedbyte:northpost-parser:1.1.0'
 ```
 
 Kotlin DSL:
 
 ```kotlin
-implementation("com.guidedbyte:northpost-parser:1.0.0")
+implementation("com.guidedbyte:northpost-parser:1.1.0")
 ```
 
 ### Maven
@@ -38,7 +38,7 @@ implementation("com.guidedbyte:northpost-parser:1.0.0")
 <dependency>
     <groupId>com.guidedbyte</groupId>
     <artifactId>northpost-parser</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
@@ -222,7 +222,24 @@ This approach correctly handles addresses with or without an addressee line, reg
 | Suite | Scope | Description |
 |-------|-------|-------------|
 | `AddressParserTest` | Unit | 300+ tests across 20+ categories — civic, French, PO box, rural, lettered avenues, direction pairs, type disambiguation, hyphen/slash/ampersand preservation, edge cases, validation, batch, performance |
-| `OdaAddressTest` | Parameterized | 147 curated addresses from Statistics Canada ODA datasets |
+| `OdaAddressTest` | Parameterized | 150 curated addresses from Statistics Canada ODA datasets |
+| `NarSampleRegressionTest` | Parameterized | About 2,400 NAR addresses from all 13 provinces and territories plus known-hard patterns, replayed against the parser's recorded output (one test per province) |
+
+### NAR Regression Sample
+
+`src/test/resources/nar_sample_addresses.csv` holds about 2,400 addresses drawn from the National Address Register across all 13 provinces and territories, each with the exact component values the parser produced for it. `NarSampleRegressionTest` replays the file on every `./gradlew test`, so a change in parser behaviour, including one introduced by an ANTLR runtime bump, fails the build without the multi-gigabyte bulk datasets. The file is also the conformance target for ports of the parser to other languages: feed each `address` column (with `\n` expanded to a line break) to the port and compare the eight remaining columns exactly.
+
+Rows are stratified by province, with small provinces over-weighted so Ontario and Quebec do not dominate, and within a province by shape (unit, street type, direction and civic suffix present or absent). Known-hard patterns get their own sections: New Brunswick `ROUTE nnn`, Quebec `GRANDE ALLÉE`-style odonyms, lettered and numbered streets, fractional civic numbers and compound unit labels.
+
+The expected values are the parser's own output, not NAR ground truth, so the file is a behaviour snapshot rather than a correctness oracle:
+
+```bash
+# After an intentional parser change: re-record the expected values, then review the diff
+./gradlew refreshNarSample
+
+# Redraw the sample itself (deterministic, seeded; needs nar-data/NAR_*.zip, see NAR Bulk Validation)
+./gradlew drawNarSample
+```
 
 ### ODA Bulk Validation
 
@@ -255,6 +272,11 @@ The parser can also be validated against the [Statistics Canada NAR](https://www
 ```
 
 Reports are written to `build/reports/nar-bulk/`. Both ODA and NAR bulk tests run in parallel and complete in under 5 minutes on modern hardware with 1.5GB heap.
+
+### Data Attribution
+
+- `nar_sample_addresses.csv`: Adapted from Statistics Canada, National Address Register (NAR_202512). This does not constitute an endorsement by Statistics Canada of this product. Used under the [Statistics Canada Open Licence](https://www.statcan.gc.ca/en/reference/licence).
+- `oda_test_addresses.csv`: Contains information licensed under the [Open Government Licence – Canada](https://open.canada.ca/en/open-government-licence-canada), from Statistics Canada's Open Database of Addresses.
 
 ### Accuracy
 
@@ -298,13 +320,33 @@ Not all ODA provinces provide all structured fields — "Addresses Tested" refle
 
 ## Tech Stack
 
-| Component | Version |
-|-----------|---------|
-| Java | 21 |
-| ANTLR | 4.13.1 |
-| Gradle | 9.4.0 |
-| JUnit | 5 |
-| AssertJ | 3.24.2 |
+| Component | Role |
+|-----------|------|
+| Java 21 | Minimum version to build and to run |
+| ANTLR 4 | Generates the parser at build time; `antlr4-runtime` ships as a dependency |
+| SLF4J API | Logging facade shipped as a dependency; you provide the implementation |
+| Gradle | Build, through the included wrapper |
+| JUnit, AssertJ, Logback | Tests only; nothing ships in the artifact |
+
+Exact versions live in [`gradle/libs.versions.toml`](gradle/libs.versions.toml) and
+[`gradle/wrapper/gradle-wrapper.properties`](gradle/wrapper/gradle-wrapper.properties), where
+Dependabot keeps them current.
+
+## Versioning
+
+NorthPost Parser follows [Semantic Versioning](https://semver.org/). Release tags are `vMAJOR.MINOR.PATCH`.
+
+**What the version number covers.** The public API is the `com.guidedbyte.address.model` and `com.guidedbyte.address.service` packages: `AddressParserService` and its nested types, `AddressComponents` with its builder and enums, and `NormalizationStrategy`. The `com.guidedbyte.address.parser` package and the generated ANTLR classes are implementation details and may change in any release.
+
+- **MAJOR**: a change that breaks code compiled against or written for the public API. Removing or renaming a public type, method, constructor, builder field or enum constant counts, and so does changing what a field means (for example, moving the unit number to a different field).
+- **MINOR**: new public API, new enum constants, support for new street types or address formats, and parsing improvements that change the output for some inputs. Upgrading needs no code changes, with the enum caveat below.
+- **PATCH**: bug fixes, dependency updates for security advisories, and documentation. A patch release is cut automatically when a dependency shipped in the artifact has a security advisory.
+
+**Parse output can change in a minor release.** The parser is validated against millions of real addresses, and improving accuracy means some inputs parse differently after an upgrade. Such changes are listed in the release notes. If your code depends on exact output for specific inputs, pin the minor version and test before upgrading.
+
+**New enum constants are minor, but check exhaustive switches.** Adding a constant to `AddressType`, `ParsingMode`, `ParsingStrategy` or `NormalizationStrategy` does not break compiled code, but a `switch` expression over the enum with no `default` branch stops compiling. Add a `default` branch if you want to take minor upgrades without source changes.
+
+Releases are made when the parser or a shipped dependency changes, not on a schedule. Updates to build and test tooling do not produce a release.
 
 ## License
 

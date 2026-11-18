@@ -20,6 +20,8 @@ GitHub is configured to **squash-and-merge** PRs. After a PR merges, use `git br
 ./gradlew test --tests "com.guidedbyte.address.AddressParserTest.CivicAddressTests.shouldParseCompleteCivicAddress"  # Run a single test method (nested class syntax)
 ./gradlew cleanTest test -PodaBulk -PodaBulkOnly                  # ODA bulk validation (all provinces)
 ./gradlew cleanTest test -PodaBulk -PodaBulkOnly -PodaProvinces=BC # ODA bulk validation (specific province)
+./gradlew refreshNarSample         # Re-record expected output in the NAR regression sample after an intentional parser change
+./gradlew drawNarSample            # Redraw the NAR regression sample from nar-data/ (deterministic, seeded)
 ```
 
 Java 21 required (toolchain set in `build.gradle`). Always use the wrapper (`./gradlew`); its Gradle version is defined in `gradle/wrapper/gradle-wrapper.properties` and kept current by Dependabot.
@@ -35,6 +37,7 @@ Java 21 required (toolchain set in `build.gradle`). Always use the wrapper (`./g
 ### Visitor (`AddressComponentVisitor`)
 - **Anchor-based line classification**: each pre-region line is classified by content anchors (delivery keywords, care-of markers, site info prefixes) rather than ordinal position; lines with no anchors default to addressee (first) or delivery (subsequent)
 - Region identification stays positional (last line) per Canada Post convention
+- Province detection on the region line scans right-to-left from the postal code, so the province marker nearest the postal code wins (2-letter code tried first at each position, then full names/informal abbreviations). A municipality can itself contain a province code or name (`NIAGARA ON THE LAKE ON L0S 1J0` → municipality=`NIAGARA ON THE LAKE`, province=`ON`); a province that appears only once is unaffected
 - Comprehensive street type lookup tables for EN and FR (includes Calgary/Edmonton abbreviations: GD, CA, CX, PS, PZ, LP, AL, HI, GY, GL, PW, CE, LK, GW; common types: PKWY, CREST, BLUFF, SPUR, ESTATE, GATEWAY, WALKWAY, OUTLOOK; NAR-validated: SIDERD, SIDEROAD, CONC, TLINE, CIRCT, VILLGE, PATHWAY, PTWAY, DRIVEWAY, DRWY, CTR, POINTE, HIGHLANDS, HGHLDS, HARBR, CROIS, RLE, SENT)
 - French type-first disambiguation (Rule 3: e.g., "RUE PRINCIPALE" vs "123 RUE DES ÉRABLES")
 - Lettered/numbered avenue detection: when `AVENUE`/`AVE`/`AV` is followed by a single bare token (letter A-Z, number, or alphanumeric code), keeps the type word in the street name (`AVENUE P` → name=`AVENUE P`, type=`AVENUE`) instead of applying French type-first split. Direction detection is also guarded to prevent consuming the letter as a direction in 2-word patterns (`AVENUE N` → the N is the street letter, not North).
@@ -67,7 +70,9 @@ Java 21 required (toolchain set in `build.gradle`). Always use the wrapper (`./g
 - JUnit 6 with AssertJ assertions
 - Tests instantiate services directly (no framework context)
 - `AddressParserTest` — unit tests for parser service (civic, French, PO box, rural, general delivery, strict/lenient strategies)
-- `OdaAddressTest` — parameterized test using 147 curated addresses from `oda_test_addresses.csv` (pipe-delimited, `\n` literals for line breaks)
+- `OdaAddressTest` — parameterized test using 150 curated addresses from `oda_test_addresses.csv` (pipe-delimited, `\n` literals for line breaks); expectations were curated against ODA ground truth, empty name/unit/postal code means "not checked"
+- `NarSampleRegressionTest` — replays `nar_sample_addresses.csv` (about 2,400 NAR addresses, all 13 provinces/territories, hard-case sections first; same format as the ODA file) and requires every field to equal the parser's recorded output. One test per province so the build stays fast. The file is a behaviour snapshot and the conformance target for ports to other languages: after an intentional parser change run `./gradlew refreshNarSample` and review the diff; `./gradlew drawNarSample` redraws the sample from `nar-data/` (`NarSampleGenerator`, seeded hash ranking, stratified by province × shape plus hard-case strata)
+- `AddressFixtures` reads/writes the shared pipe-delimited fixture format; `NarCsv` turns NAR CSV rows into address text for both the bulk test and the generator
 
 ### ODA Bulk Validation
 

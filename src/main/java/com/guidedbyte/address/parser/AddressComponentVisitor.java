@@ -974,65 +974,62 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
             }
         }
 
-        // Find province code (2-letter)
+        // Find the province. Scan right-to-left so the province marker nearest the postal code wins:
+        // a municipality can itself contain a province code or name ("NIAGARA ON THE LAKE ON L0S 1J0",
+        // "NIAGARA ON THE LAKE ONTARIO L0S 1J0"), and the real province is always the last one before
+        // the postal code. At each position a 2-letter code is tried first, then full names and informal
+        // abbreviations (Plan 1), longest match first so "NEWFOUNDLAND AND LABRADOR" beats "NEWFOUNDLAND".
+        // Postal code tokens are skipped rather than used as a bound so a province written after the
+        // postal code is still found.
         String province = null;
         int provinceStartIdx = -1;
         int provinceEndIdx = -1;
-        for (int i = 0; i < tokens.size(); i++) {
-            if (i >= postalCodeStartIdx && i <= postalCodeEndIdx) continue;
-            if (tokens.get(i).type == CanadianAddressParser.WORD
-                    && PROVINCE_CODES.contains(tokens.get(i).text.toUpperCase())) {
-                province = tokens.get(i).text.toUpperCase();
+        for (int i = tokens.size() - 1; i >= 0 && province == null; i--) {
+            if (postalCodeStartIdx >= 0 && i >= postalCodeStartIdx && i <= postalCodeEndIdx) continue;
+            if (tokens.get(i).type != CanadianAddressParser.WORD) continue;
+
+            String codeCandidate = tokens.get(i).text.toUpperCase();
+            if (PROVINCE_CODES.contains(codeCandidate)) {
+                province = codeCandidate;
                 provinceStartIdx = i;
                 provinceEndIdx = i;
                 break;
             }
-        }
 
-        // Plan 1: If no 2-letter code found, scan right-to-left for province names
-        if (province == null) {
-            int scanEnd = tokens.size();
-            if (postalCodeStartIdx >= 0) scanEnd = postalCodeStartIdx;
+            for (Map.Entry<String, String> entry : PROVINCE_NAMES.entrySet()) {
+                String name = entry.getKey();
+                String[] nameParts = name.split("\\s+");
 
-            // Right-to-left: try longest match first at each position
-            for (int i = scanEnd - 1; i >= 0 && province == null; i--) {
-                if (tokens.get(i).type != CanadianAddressParser.WORD) continue;
+                // Check if enough tokens exist starting at position (i - nameParts.length + 1)
+                int startPos = i - nameParts.length + 1;
+                if (startPos < 0) continue;
 
-                for (Map.Entry<String, String> entry : PROVINCE_NAMES.entrySet()) {
-                    String name = entry.getKey();
-                    String[] nameParts = name.split("\\s+");
-
-                    // Check if enough tokens exist starting at position (i - nameParts.length + 1)
-                    int startPos = i - nameParts.length + 1;
-                    if (startPos < 0) continue;
-
-                    boolean match = true;
-                    for (int j = 0; j < nameParts.length; j++) {
-                        int tokenIdx = startPos + j;
-                        if (tokenIdx >= postalCodeStartIdx && tokenIdx <= postalCodeEndIdx && postalCodeStartIdx >= 0) {
-                            match = false;
-                            break;
-                        }
-                        String tokenText = tokens.get(tokenIdx).text.toUpperCase();
-                        // Strip trailing period for comparison
-                        String compareText =
-                                tokenText.endsWith(".") ? tokenText.substring(0, tokenText.length() - 1) : tokenText;
-                        String namePartCompare = nameParts[j].endsWith(".")
-                                ? nameParts[j].substring(0, nameParts[j].length() - 1)
-                                : nameParts[j];
-                        if (!compareText.equals(namePartCompare) && !tokenText.equals(nameParts[j])) {
-                            match = false;
-                            break;
-                        }
-                    }
-
-                    if (match) {
-                        province = entry.getValue();
-                        provinceStartIdx = startPos;
-                        provinceEndIdx = i;
-                        logger.debug("Matched province name '{}' → '{}'", name, province);
+                boolean match = true;
+                for (int j = 0; j < nameParts.length; j++) {
+                    int tokenIdx = startPos + j;
+                    if (tokenIdx >= postalCodeStartIdx && tokenIdx <= postalCodeEndIdx && postalCodeStartIdx >= 0) {
+                        match = false;
                         break;
                     }
+                    String tokenText = tokens.get(tokenIdx).text.toUpperCase();
+                    // Strip trailing period for comparison
+                    String compareText =
+                            tokenText.endsWith(".") ? tokenText.substring(0, tokenText.length() - 1) : tokenText;
+                    String namePartCompare = nameParts[j].endsWith(".")
+                            ? nameParts[j].substring(0, nameParts[j].length() - 1)
+                            : nameParts[j];
+                    if (!compareText.equals(namePartCompare) && !tokenText.equals(nameParts[j])) {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match) {
+                    province = entry.getValue();
+                    provinceStartIdx = startPos;
+                    provinceEndIdx = i;
+                    logger.debug("Matched province name '{}' → '{}'", name, province);
+                    break;
                 }
             }
         }
@@ -1286,9 +1283,10 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
         if (idx >= tokens.size()) return;
 
         // Try to coalesce adjacent compound tokens into a single unit value (1/2, 405-2, 1101.1)
+        // A comma may separate the unit value from the civic number in the French form (APP 4, 123, RUE ...).
         CompoundResult compound = tryCoalesceAdjacentCompound(tokens, idx);
         if (compound != null) {
-            int afterCompound = idx + compound.tokensConsumed;
+            int afterCompound = skipCommas(tokens, idx + compound.tokensConsumed);
             boolean hasFollowingCivic = afterCompound < tokens.size()
                     && (tokens.get(afterCompound).type == CanadianAddressParser.NUMBER
                             || tokens.get(afterCompound).type == CanadianAddressParser.ALPHANUMERIC);
@@ -1302,19 +1300,20 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
         // Existing single-token heuristic (only if compound didn't consume)
         if (idx == 1) {
             TokenInfo candidate = tokens.get(idx);
-            boolean hasFollowingCivic = idx + 1 < tokens.size()
-                    && (tokens.get(idx + 1).type == CanadianAddressParser.NUMBER
-                            || tokens.get(idx + 1).type == CanadianAddressParser.ALPHANUMERIC);
+            int afterCandidate = skipCommas(tokens, idx + 1);
+            boolean hasFollowingCivic = afterCandidate < tokens.size()
+                    && (tokens.get(afterCandidate).type == CanadianAddressParser.NUMBER
+                            || tokens.get(afterCandidate).type == CanadianAddressParser.ALPHANUMERIC);
 
             if (candidate.type == CanadianAddressParser.ALPHANUMERIC) {
                 // Digit-starting mixed token (5A, 2B) — always a unit identifier when designator is present
                 builder.unitNumber(candidate.text);
-                idx++;
+                idx = afterCandidate;
             } else if ((candidate.type == CanadianAddressParser.WORD || candidate.type == CanadianAddressParser.NUMBER)
                     && hasFollowingCivic) {
-                // WORD or NUMBER followed by civic number → unit value (APT A 394, APT 5 394)
+                // WORD or NUMBER followed by civic number → unit value (APT A 394, APT 5 394, APP 4, 123)
                 builder.unitNumber(candidate.text);
-                idx++;
+                idx = afterCandidate;
             }
             // else: single NUMBER with no following civic → it IS the civic (APT 394 QUEEN ST)
             // else: WORD with no following civic → fall through to street parsing (APT QUEEN ST)
@@ -1808,6 +1807,39 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
     }
 
     /**
+     * True when a comma-delimited segment is just a civic or unit number, as in the French forms {@code 123, RUE
+     * PRINCIPALE} and {@code APP 4, 123, RUE PRINCIPALE}: at least one NUMBER or ALPHANUMERIC token and no WORD other
+     * than a leading unit designator. Hyphens and slashes are tolerated so {@code 4-123,} and {@code 123 1/2,} qualify.
+     */
+    private static boolean isCivicNumberSegment(List<TokenInfo> segment) {
+        boolean hasNumber = false;
+        for (int i = 0; i < segment.size(); i++) {
+            TokenInfo t = segment.get(i);
+            switch (t.type) {
+                case CanadianAddressParser.NUMBER, CanadianAddressParser.ALPHANUMERIC -> hasNumber = true;
+                case CanadianAddressParser.WORD -> {
+                    if (i != 0 || !isUnitDesignator(t.text.toUpperCase())) return false;
+                }
+                case CanadianAddressParser.HYPHEN, CanadianAddressParser.SLASH, CanadianAddressParser.COMMA -> {
+                    // separators inside a compound civic (4-123, 123 1/2) or a stray comma
+                }
+                default -> {
+                    return false;
+                }
+            }
+        }
+        return hasNumber;
+    }
+
+    /** Index of the first token at or after {@code idx} that is not a COMMA (or {@code tokens.size()}). */
+    private static int skipCommas(List<TokenInfo> tokens, int idx) {
+        while (idx < tokens.size() && tokens.get(idx).type == CanadianAddressParser.COMMA) {
+            idx++;
+        }
+        return idx;
+    }
+
+    /**
      * Plan 7: Attempt to split a single-line comma-delimited address into synthetic delivery + region lines. Scans
      * comma positions right-to-left, looking for a province code/name or postal code after the comma. The rightmost
      * comma that satisfies this heuristic is the split point.
@@ -1840,6 +1872,12 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
                 afterIdx++;
             }
             if (afterIdx >= tokens.size()) continue;
+
+            // French civic-number comma ("123, RUE PRINCIPALE" or "APP 4, 123, RUE PRINCIPALE"):
+            // when the segment since the previous comma is only a civic or unit number, this comma
+            // follows the number and is not the delivery/region boundary.
+            int segmentStart = ci == 0 ? 0 : commaPositions.get(ci - 1) + 1;
+            if (isCivicNumberSegment(tokens.subList(segmentStart, commaIdx))) continue;
 
             // Check if tokens from afterIdx to end contain a province code/name or postal code
             boolean hasRegionMarker = false;

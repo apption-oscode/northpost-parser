@@ -481,6 +481,84 @@ class AddressParserTest {
             assertThat(result.components().streetType()).isEqualTo("RUE");
             assertThat(result.components().streetName()).isEqualTo("PRINCIPALE");
         }
+
+        // French convention puts a comma after the civic number: "123, rue Principale" (issue #66).
+
+        @Test
+        @DisplayName("French civic-number comma on a single line: 123, RUE PRINCIPALE, MONTRÉAL QC")
+        void frenchCivicComma_singleLine() {
+            var result = parser.parseAddress("123, RUE PRINCIPALE, MONTRÉAL QC H3B 1A1");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().streetNumber()).isEqualTo("123");
+            assertThat(result.components().streetName()).isEqualTo("PRINCIPALE");
+            assertThat(result.components().streetType()).isEqualTo("RUE");
+            assertThat(result.components().municipality()).isEqualTo("MONTRÉAL");
+            assertThat(result.components().province()).isEqualTo("QC");
+            assertThat(result.components().postalCode()).isEqualTo("H3B 1A1");
+        }
+
+        @Test
+        @DisplayName("French civic-number comma after a leading unit: APP 4, 123, RUE PRINCIPALE")
+        void frenchCivicComma_leadingUnit() {
+            var result = parser.parseAddress("APP 4, 123, RUE PRINCIPALE\nMONTRÉAL QC H3B 1A1");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().unitNumber()).isEqualTo("4");
+            assertThat(result.components().streetNumber()).isEqualTo("123");
+            assertThat(result.components().streetName()).isEqualTo("PRINCIPALE");
+            assertThat(result.components().streetType()).isEqualTo("RUE");
+            assertThat(result.components().municipality()).isEqualTo("MONTRÉAL");
+        }
+
+        @Test
+        @DisplayName("French civic-number comma with unit and region on a single line")
+        void frenchCivicComma_leadingUnitSingleLine() {
+            var result = parser.parseAddress("APP 4, 123, RUE PRINCIPALE, MONTRÉAL QC H3B 1A1");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().unitNumber()).isEqualTo("4");
+            assertThat(result.components().streetNumber()).isEqualTo("123");
+            assertThat(result.components().streetName()).isEqualTo("PRINCIPALE");
+            assertThat(result.components().streetType()).isEqualTo("RUE");
+            assertThat(result.components().municipality()).isEqualTo("MONTRÉAL");
+            assertThat(result.components().province()).isEqualTo("QC");
+            assertThat(result.components().postalCode()).isEqualTo("H3B 1A1");
+        }
+
+        @Test
+        @DisplayName("Unit-hyphen-civic with French comma on a single line: 4-123, RUE PRINCIPALE, MONTRÉAL QC")
+        void frenchCivicComma_unitHyphenCivic() {
+            var result = parser.parseAddress("4-123, RUE PRINCIPALE, MONTRÉAL QC H3B 1A1");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().unitNumber()).isEqualTo("4");
+            assertThat(result.components().streetNumber()).isEqualTo("123");
+            assertThat(result.components().streetName()).isEqualTo("PRINCIPALE");
+            assertThat(result.components().streetType()).isEqualTo("RUE");
+            assertThat(result.components().municipality()).isEqualTo("MONTRÉAL");
+        }
+
+        @Test
+        @DisplayName("Regression: French civic-number comma on its own line with direction")
+        void frenchCivicComma_multiLineWithDirection() {
+            var result = parser.parseAddress("JEAN DUPONT\n1234, BOUL SAINT-LAURENT O\nMONTRÉAL QC H2X 2S9");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().addressee()).isEqualTo("JEAN DUPONT");
+            assertThat(result.components().streetNumber()).isEqualTo("1234");
+            assertThat(result.components().streetName()).isEqualTo("SAINT-LAURENT");
+            assertThat(result.components().streetType()).isEqualTo("BOUL");
+            assertThat(result.components().streetDirection()).isEqualTo("O");
+        }
+
+        @Test
+        @DisplayName("Regression: English unit comma on a single line: SUITE 200, 123 MAIN ST, TORONTO ON")
+        void englishUnitComma_singleLine() {
+            var result = parser.parseAddress("SUITE 200, 123 MAIN ST, TORONTO ON M5V 2Y7");
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().unitNumber()).isEqualTo("200");
+            assertThat(result.components().streetNumber()).isEqualTo("123");
+            assertThat(result.components().streetName()).isEqualTo("MAIN");
+            assertThat(result.components().streetType()).isEqualTo("ST");
+            assertThat(result.components().municipality()).isEqualTo("TORONTO");
+            assertThat(result.components().postalCode()).isEqualTo("M5V 2Y7");
+        }
     }
 
     @Nested
@@ -826,6 +904,90 @@ class AddressParserTest {
             assertThat(result.successful()).isTrue();
             assertThat(result.components().country()).isEqualTo("CANADA");
             assertThat(result.warnings()).contains("Country specification is redundant for Canadian addresses");
+        }
+    }
+
+    @Nested
+    @DisplayName("Region Line Province Detection")
+    class RegionLineProvinceTests {
+
+        @Test
+        @DisplayName("Should keep a municipality containing a province code intact (NIAGARA ON THE LAKE)")
+        void shouldKeepMunicipalityContainingProvinceCode() {
+            var result = parser.parseAddress("JOHN SMITH\n1875 LAKESHORE RD\nNIAGARA ON THE LAKE ON L0S 1J0");
+
+            assertThat(result.successful()).isTrue();
+            assertThat(result.components().municipality()).isEqualTo("NIAGARA ON THE LAKE");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().postalCode()).isEqualTo("L0S 1J0");
+        }
+
+        @Test
+        @DisplayName("Should keep the municipality intact when the postal code has no space")
+        void shouldKeepMunicipalityIntactWithUnspacedPostalCode() {
+            var result = parser.parseAddress("JOHN SMITH\n6 SEYVAL PL\nNIAGARA ON THE LAKE ON  L0S1J0");
+
+            assertThat(result.components().municipality()).isEqualTo("NIAGARA ON THE LAKE");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().postalCode()).isEqualTo("L0S 1J0");
+        }
+
+        @Test
+        @DisplayName("Should keep the municipality intact when the postal code is on its own line")
+        void shouldKeepMunicipalityIntactWithPostalCodeOnOwnLine() {
+            var result = parser.parseAddress("JOHN SMITH\n17 BROCK ST\nNIAGARA ON THE LAKE ON\nL0S 1J0");
+
+            assertThat(result.components().municipality()).isEqualTo("NIAGARA ON THE LAKE");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().postalCode()).isEqualTo("L0S 1J0");
+        }
+
+        @Test
+        @DisplayName("Should prefer the province nearest the postal code when the municipality contains another code")
+        void shouldPreferProvinceNearestPostalCodeForNonOntarioCode() {
+            // "NB" inside the municipality must not be taken as New Brunswick
+            var result = parser.parseAddress("JOHN SMITH\n123 MAIN ST\nPORT NB HARBOUR NS B0J 1J0");
+
+            assertThat(result.components().municipality()).isEqualTo("PORT NB HARBOUR");
+            assertThat(result.components().province()).isEqualTo("NS");
+            assertThat(result.components().postalCode()).isEqualTo("B0J 1J0");
+        }
+
+        @Test
+        @DisplayName("Should keep the municipality intact when the province is written as a full name")
+        void shouldKeepMunicipalityIntactWithFullProvinceName() {
+            var result = parser.parseAddress("JOHN SMITH\n1875 LAKESHORE RD\nNIAGARA ON THE LAKE ONTARIO L0S 1J0");
+
+            assertThat(result.components().municipality()).isEqualTo("NIAGARA ON THE LAKE");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().postalCode()).isEqualTo("L0S 1J0");
+        }
+
+        @Test
+        @DisplayName("Should keep the municipality intact in a comma-separated single-line address")
+        void shouldKeepMunicipalityIntactInCommaSeparatedAddress() {
+            var result = parser.parseAddress("1875 LAKESHORE RD, NIAGARA ON THE LAKE, ON L0S 1J0");
+
+            assertThat(result.components().streetNumber()).isEqualTo("1875");
+            assertThat(result.components().streetName()).isEqualTo("LAKESHORE");
+            assertThat(result.components().municipality()).isEqualTo("NIAGARA ON THE LAKE");
+            assertThat(result.components().province()).isEqualTo("ON");
+            assertThat(result.components().postalCode()).isEqualTo("L0S 1J0");
+        }
+
+        @ParameterizedTest
+        @ValueSource(
+                strings = {
+                    "JOHN SMITH\n123 MAIN ST\nTORONTO ON M5V 2Y7",
+                    "JOHN SMITH\n123 MAIN ST\nTORONTO ON M5V 2Y7 CANADA",
+                    "JOHN SMITH\n123 MAIN ST\nTORONTO ON"
+                })
+        @DisplayName("Should still find a province that appears only once")
+        void shouldStillFindSingleProvince(String address) {
+            var result = parser.parseAddress(address);
+
+            assertThat(result.components().municipality()).isEqualTo("TORONTO");
+            assertThat(result.components().province()).isEqualTo("ON");
         }
     }
 
