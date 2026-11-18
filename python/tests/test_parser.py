@@ -254,6 +254,7 @@ def test_french_article_province_guard(parser, province, kind):
     ("123/125 MAIN ST", "", "123/125"),
     ("(123) MAIN ST", "", "123"),
     ("123A MAIN ST", "", "123A"),
+    ("APT A-101 5300 BIG WHITE RD", "A-101","5300")
 ])
 def test_civic_and_units(parser, delivery, unit, number):
     result = parser.parse_address(f"TEST PERSON\n{delivery}\nTORONTO ON M5V 2Y7")
