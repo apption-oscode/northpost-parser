@@ -24,22 +24,14 @@ class AddressParserTest {
     @DisplayName("Optional Field Extraction")
     class ExtractionOptionsTests {
         @Test
-        void shouldParseStreetNameBeforeCommaSeparatedCivicNumber() {
-            var result = parser.parseAddress("BRIDGE ROAD, 5\nTORONTO, ON", false, false);
-            assertThat(result.successful()).isTrue();
-            assertThat(result.components().streetNumber()).isEqualTo("5");
-            assertThat(result.components().streetName()).isEqualTo("BRIDGE ROAD");
-            assertThat(result.components().streetType()).isEmpty();
-            assertThat(result.components().addressType()).isEqualTo(AddressType.CIVIC);
-            assertThat(result.components().addressee()).isEmpty();
-            assertThat(result.components().postalCode()).isEmpty();
-            assertThat(result.components().municipality()).isEqualTo("TORONTO");
-            assertThat(result.components().province()).isEqualTo("ON");
-            assertThat(result.warnings()).doesNotContain("Address may be incomplete for mailing purposes");
-            assertThat(result.warnings()).noneMatch(w -> w.contains("without street number"));
-            var defaultResult = parser.parseAddress("BRIDGE ROAD, 5\nTORONTO, ON");
-            assertThat(defaultResult.components().addressee()).isEqualTo("BRIDGE ROAD , 5");
-            assertThat(defaultResult.components().streetNumber()).isEmpty();
+        void shouldRejectStreetNameBeforeCommaSeparatedCivicNumber() {
+            var result = parser.parseAddress(
+                    "BRIDGE ROAD, 5\nTORONTO, ON M5V 2Y7",
+                    AddressParserService.ParsingStrategy.STRICT,
+                    false,
+                    false);
+            assertThat(result.successful()).isFalse();
+            assertThat(result.components().streetNumber()).isEmpty();
         }
 
         @Test

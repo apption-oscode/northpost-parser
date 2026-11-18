@@ -80,10 +80,9 @@ results = parser.parse_addresses(
 ```
 
 When addressee extraction is disabled, unanchored lines are interpreted as
-delivery information instead.
-With `has_addressee=False`, a delivery line in `street name, number` format
-(for example, `BRIDGE ROAD, 5`) retains the full street name `BRIDGE ROAD` and
-extracts civic number `5`, without splitting off a street type.
+delivery information instead. A civic address must put the civic number before
+the street name; a street name followed by a comma and number (for example,
+`BRIDGE ROAD, 5`) is not parsed as a civic address.
 Disabling postal-code extraction leaves that field
 empty and prevents province inference from it. Postal-code tokens can still be
 recognized structurally to separate address lines and municipality text.

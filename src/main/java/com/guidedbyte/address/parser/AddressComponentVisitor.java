@@ -1124,23 +1124,6 @@ public class AddressComponentVisitor extends CanadianAddressBaseVisitor<AddressC
             return;
         }
 
-        if (!hasAddressee
-                && tokens.size() >= 3
-                && firstToken.type == CanadianAddressParser.WORD
-                && tokens.get(tokens.size() - 2).type == CanadianAddressParser.COMMA
-                && tokens.getLast().type == CanadianAddressParser.NUMBER
-                && tokens.subList(0, tokens.size() - 2).stream()
-                        .allMatch(t -> t.type == CanadianAddressParser.WORD
-                                || t.type == CanadianAddressParser.NUMBER
-                                || t.type == CanadianAddressParser.ALPHANUMERIC)) {
-            builder.streetNumber(tokens.getLast().text);
-            builder.streetName(String.join(" ", collectStreetWords(tokens.subList(0, tokens.size() - 2), 0, null)));
-            builder.streetType("");
-            builder.streetDirection("");
-            builder.addressType(AddressType.CIVIC);
-            return;
-        }
-
         // A hyphenated unit-civic form takes precedence over interpreting PH as a
         // unit designator (e.g., PH-456 means unit PH at civic number 456).
         if (isUnitHyphenCivicPattern(tokens)) {

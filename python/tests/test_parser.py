@@ -106,23 +106,16 @@ def test_no_addressee_single_delivery_line(parser):
     assert parser.parse_address("123 MAIN ST").components.addressee == "123 MAIN ST"
 
 
-def test_street_name_before_comma_separated_civic_number(parser):
+def test_reject_street_name_before_comma_separated_civic_number(parser):
     result = parser.parse_address(
-        "BRIDGE ROAD, 5\nTORONTO, ON", has_addressee=False, has_postal_code=False,
+        "BRIDGE ROAD, 5\nTORONTO, ON M5V 2Y7",
+        ParsingStrategy.STRICT,
+        has_addressee=False,
+        has_postal_code=False,
     )
-    assert result.successful, result.errors
-    assert result.components.street_number == "5"
-    assert result.components.street_name == "BRIDGE ROAD"
-    assert result.components.street_type == ""
-    assert result.components.address_type == AddressType.CIVIC
-    assert result.components.addressee == ""
-    assert result.components.postal_code == ""
-    assert result.components.municipality == "TORONTO"
-    assert result.components.province == "ON"
-    assert not any("without street number" in warning for warning in result.warnings)
-    default = parser.parse_address("BRIDGE ROAD, 5\nTORONTO, ON")
-    assert default.components.addressee == "BRIDGE ROAD , 5"
-    assert default.components.street_number == ""
+    assert not result.successful
+    assert result.components.street_number == ""
+    assert "Missing delivery address" in result.errors
 
 
 @pytest.mark.parametrize("address", [

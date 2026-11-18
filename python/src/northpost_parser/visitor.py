@@ -471,19 +471,6 @@ class AddressComponentVisitor(CanadianAddressVisitor):
             self._set(address_type=AddressType.GENERAL_DELIVERY)
         elif first.text in {"SITE", "COMP", "EMPL"}:
             self._site(line)
-        elif (
-            not self.has_addressee
-            and len(tokens) >= 3
-            and first.type == P.WORD
-            and tokens[-2].type == P.COMMA
-            and tokens[-1].type == P.NUMBER
-            and all(t.type in WORD_TYPES for t in tokens[:-2])
-        ):
-            self._set(
-                street_number=tokens[-1].text,
-                street_name=" ".join(collect_street_words(tokens[:-2], 0)),
-                street_type="", street_direction="", address_type=AddressType.CIVIC,
-            )
         elif unit_hyphen_civic(tokens):
             self._civic(tokens)
         elif is_unit_designator(first.text):
