@@ -44,6 +44,67 @@ dependencies {
     testRuntimeOnly libs.logback.classic
 }
 
+// Libraries that reach consumers through this library are handled differently from build
+// and test tooling: Dependabot's ordinary updates to them wait for a manual merge, and its
+// security updates to them open an issue asking for a release. The automation keeps its
+// own list of them in two other files:
+//
+//   .github/workflows/dependabot-auto-merge.yml  the labelling step
+//   .github/dependabot.yml                       the runtime-security group
+//
+// The check below fails the build when a published dependency has a group that is not in
+// monitoredRuntimeGroups, or when a group in that list is missing from either file.
+//
+// It has two limits. It sees the dependencies this build declares, not what those pull in.
+// And it searches the text of the two files, so it catches a file that was forgotten, not a
+// pattern put in the wrong part of one.
+def monitoredRuntimeGroups = ['org.antlr', 'org.slf4j']
+
+tasks.register('checkRuntimeDependencies') {
+    group = 'verification'
+    description = 'Fails if a dependency this build publishes is not in the lists the Dependabot automation monitors.'
+
+    // apiElements and runtimeElements are what the published POM and module metadata are built
+    // from today; a feature variant or test fixtures would publish more. The provider is read
+    // after the whole build script has been evaluated, so a dependency is seen wherever it was
+    // declared.
+    def groups = monitoredRuntimeGroups
+    def published = provider {
+        [configurations.apiElements, configurations.runtimeElements].collectMany { conf ->
+            conf.allDependencies.withType(ExternalModuleDependency).collect { "${it.group}:${it.name}".toString() } +
+                conf.allDependencyConstraints.collect { "${it.group}:${it.name}".toString() }
+        }.unique()
+    }
+    def dependabotConfig = layout.projectDirectory.file('.github/dependabot.yml')
+    def autoMergeWorkflow = layout.projectDirectory.file('.github/workflows/dependabot-auto-merge.yml')
+
+    doLast {
+        def problems = []
+        def unmonitored = published.get().findAll { coords -> !groups.any { coords.startsWith(it) } }
+        if (!unmonitored.isEmpty()) {
+            problems << "Consumers receive these dependencies through this library, but the Dependabot automation " +
+                "does not treat them as shipped: ${unmonitored.join(', ')}.\n" +
+                "  Add each group to monitoredRuntimeGroups in build.gradle, to the labelling step in " +
+                ".github/workflows/dependabot-auto-merge.yml and to the runtime-security group in .github/dependabot.yml.\n" +
+                "  If consumers should not receive a dependency, change its scope instead."
+        }
+        def dependabotText = dependabotConfig.asFile.text
+        def autoMergeText = autoMergeWorkflow.asFile.text
+        groups.each { g ->
+            if (!dependabotText.contains("\"${g}*\"")) {
+                problems << ".github/dependabot.yml: the runtime-security group has no pattern \"${g}*\"."
+            }
+            if (!autoMergeText.contains("*${g}*")) {
+                problems << ".github/workflows/dependabot-auto-merge.yml: the labelling step has no pattern *${g}*."
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException(problems.join('\n'))
+        }
+    }
+}
+check.dependsOn 'checkRuntimeDependencies'
+
 // ANTLR configuration
 generateGrammarSource {
     maxHeapSize = "64m"

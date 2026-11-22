@@ -3,16 +3,30 @@ name: Release to Maven Central
 on:
   release:
     types: [ published ]
-  # Started by the CI auto-release job at a tag ref (github.ref_name is then the tag).
+  # Lets the owner retry a failed publish at a tag ref (github.ref_name is then the tag).
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Publishes only when the repository owner published the release or started the run.
+  # No workflow starts a release. Anything else that can create one, such as the app
+  # that merges Dependabot pull requests, would otherwise reach the publishing and
+  # signing secrets by tagging a commit of its own.
+  #
+  # That condition protects only commits that contain it. A release runs the copy of
+  # this workflow at the tagged commit, and commits older than the condition carry a
+  # copy without it. The environment covers those. The publishing and signing secrets
+  # are stored in the maven-central environment and nowhere else, so only a job that
+  # names it receives them, and an older copy of this workflow names none. The
+  # environment also makes each run wait for the repository owner's approval. Both are
+  # repository settings (Settings > Environments), not something this file can enforce.
   publish:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    if: github.actor == github.repository_owner
+    environment: maven-central
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,14 +124,14 @@ jobs:
           gh workflow run ci.yml --ref readme-version-update
           gh pr merge --auto --squash "$PR_NUMBER"
 
-  # GitHub only emails Actions failures to the person who triggered the run, and
-  # automated releases are triggered by a bot. Open an issue so a failed publish
-  # is not missed.
+  # Open an issue so a failed publish or README update is not missed, with the steps
+  # to check and retry. A skipped publish is reported too: it means someone other than
+  # the repository owner published the release, and nothing else would say so.
   report-failure:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs: [ publish, update-readme ]
-    if: always() && contains(needs.*.result, 'failure')
+    if: always() && (contains(needs.*.result, 'failure') || needs.publish.result == 'skipped')
     permissions:
       issues: write
 
@@ -129,12 +143,12 @@ jobs:
           PUBLISH_RESULT: ${{ needs.publish.result }}
           README_RESULT: ${{ needs['update-readme'].result }}
         run: |
-          gh label create release-failure --repo "$GITHUB_REPOSITORY" --force \
-            --color B60205 --description "An automated release workflow failed"
-          gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "Release $GITHUB_REF_NAME failed" \
-            --label release-failure \
-            --body "$(cat <<BODY
+          if [ "$PUBLISH_RESULT" = skipped ]; then
+            title="Release $GITHUB_REF_NAME was not published"
+          else
+            title="Release $GITHUB_REF_NAME failed"
+          fi
+          body=$(cat <<BODY
           The release workflow for \`$GITHUB_REF_NAME\` did not complete.
 
           | Job | Result |
@@ -143,6 +157,10 @@ jobs:
           | update-readme | $README_RESULT |
 
           Run: $RUN_URL
+
+          If \`publish\` was skipped, the release was not published by the repository owner, and
+          only the owner's releases go to Maven Central. If you did not expect this release, find
+          out who created it.
 
           If \`publish\` failed, check whether the version reached Maven Central before re-running:
           https://repo1.maven.org/maven2/com/guidedbyte/northpost-parser/
@@ -154,5 +172,18 @@ jobs:
           \`sed\` patterns in \`release.yml\`.
 
           To retry: \`gh workflow run release.yml --ref $GITHUB_REF_NAME\`
+          Retry only if you want this version on Maven Central. Publishing cannot be undone.
           BODY
-          )"
+          )
+          gh label create release-failure --repo "$GITHUB_REPOSITORY" --force \
+            --color B60205 --description "An automated release workflow failed" \
+            || echo "::warning::Could not create the release-failure label."
+
+          # Try the labelled, assigned issue first, then drop the label, then the assignee:
+          # each step down has fewer ways to fail.
+          new_issue() {
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body" "$@"
+          }
+          new_issue --label release-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
+            || new_issue --assignee "$GITHUB_REPOSITORY_OWNER" \
+            || new_issue
