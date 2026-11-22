@@ -272,3 +272,134 @@ jobs:
           new_issue --label release-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
             || new_issue --assignee "$GITHUB_REPOSITORY_OWNER" \
             || new_issue
+
+  # Tells the repository owner when a run they did not start has failed. GitHub emails a
+  # failed run only to whoever started it, so a run started by Dependabot, or by the app
+  # that merges its pull requests, reaches nobody: a pull request with auto-merge enabled
+  # would sit open, or main would stay broken. The owner's own runs are left to GitHub's
+  # email.
+  #
+  # A pull request from a fork is skipped: its token cannot open an issue, and the owner
+  # reviews those by hand anyway.
+  #
+  # A cancelled job is reported only outside pull requests. There nothing cancels a run on
+  # purpose, so it means a job ran past its time limit or someone stopped the run. On a
+  # pull request a newer push cancels the older run, which is not worth a notice. Two
+  # consequences on pull requests: a job that runs past its time limit is not reported,
+  # and a job that had already failed before the run was replaced still is.
+  report-failure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [ build, dependency-submission, dependency-review ]
+    if: >-
+      always() &&
+      (contains(needs.*.result, 'failure') ||
+       (github.event_name != 'pull_request' && contains(needs.*.result, 'cancelled'))) &&
+      github.actor != github.repository_owner &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SUBMISSION_RESULT: ${{ needs['dependency-submission'].result }}
+          REVIEW_RESULT: ${{ needs['dependency-review'].result }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              what="pull request #$PR_NUMBER: $PR_TITLE"
+              if [ "$BUILD_RESULT" = success ]; then
+                # The Java jobs passed, so the failure is in dependency-review, which does
+                # not hold a merge unless it has been made a required check.
+                next="The Java checks passed, and dependency-review does not hold a merge unless it has been made a required check. So a pull request with auto-merge enabled merges anyway and has probably merged already. Read the dependency-review log: if it found a vulnerable dependency, that dependency is now on main."
+              else
+                next="If the pull request has auto-merge enabled, it merges by itself once its checks pass."
+              fi
+              ;;
+            push)
+              what="main after: ${COMMIT_MSG%%$'\n'*}"
+              if [ "$SUBMISSION_RESULT" = success ]; then
+                next="The dependency baseline for this commit was still recorded. If the cause was not a failed download, main itself is broken and every pull request will fail the same way."
+              else
+                next="Until dependency-submission passes on main, the next pull requests have no dependency baseline to be compared against."
+              fi
+              ;;
+            *)
+              what="$GITHUB_REF_NAME"
+              next="This run was started by another workflow, such as the README update that follows a release."
+              ;;
+          esac
+          case "$BUILD_RESULT $SUBMISSION_RESULT $REVIEW_RESULT" in
+            *cancelled*) next="$next A job shown as cancelled most likely ran past its time limit. If the command above does not start it again, leave out --failed to run everything again." ;;
+          esac
+          body=$(cat <<BODY
+          CI failed on $what
+
+          The run was started by \`$GITHUB_ACTOR\`. GitHub emails a failed run only to whoever
+          started it, so this is the notice.
+
+          | Job | Result |
+          |---|---|
+          | Java 21 and Java 25 | $BUILD_RESULT |
+          | dependency-submission | $SUBMISSION_RESULT |
+          | dependency-review | $REVIEW_RESULT |
+
+          Run: $RUN_URL
+
+          If the log shows a download that failed (a dependency or plugin that could not be found
+          or resolved), run the failed jobs again:
+          \`gh run rerun $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --failed\`
+
+          $next
+
+          Close this issue once it is dealt with. Until then, later failures are added to it as
+          comments.
+          BODY
+          )
+          # The label is how the search below finds an open notice. Failing to create it must
+          # not stop the notice itself.
+          gh label create ci-failure --repo "$GITHUB_REPOSITORY" --force \
+            --color B60205 --description "A CI run nobody was emailed about has failed" \
+            || echo "::warning::Could not create the ci-failure label."
+
+          # Try the labelled, assigned issue first, then drop the label, then the assignee:
+          # each step down has fewer ways to fail. The title is the same for every failure,
+          # because one issue collects them and each failure names itself in its first line.
+          new_issue() {
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "CI failed in a run nobody was emailed about" --body "$body" "$@"
+          }
+          open_new_issue() {
+            new_issue --label ci-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
+              || new_issue --assignee "$GITHUB_REPOSITORY_OWNER" \
+              || new_issue
+          }
+
+          # One open issue collects the failures, so an outage at a package site does not
+          # open one issue per run. A later failure becomes a comment on it, which notifies
+          # the assignee the same way. Failures that land in the same few seconds can still
+          # open one each. If the lookup or the comment fails, open an issue anyway: a
+          # duplicate is better than no notice.
+          #
+          # The lookup lists issues directly. A search would lag behind an issue opened
+          # moments ago. The list also holds pull requests, which are left out.
+          open_issue=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=ci-failure&state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request == null)][0].number // empty') || open_issue=""
+          case "$open_issue" in
+            ''|*[!0-9]*)
+              open_new_issue
+              ;;
+            *)
+              gh issue comment "$open_issue" --repo "$GITHUB_REPOSITORY" --body "$body" \
+                || open_new_issue
+              ;;
+          esac
