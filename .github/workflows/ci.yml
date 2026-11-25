@@ -12,8 +12,12 @@ on:
 permissions:
   contents: read
 
+# A pull request keeps one run per branch and cancels the older one. Each push to main
+# gets a group of its own, so its run is never dropped. In a shared group only one run
+# can wait, and a newer one replaces it. Dependabot merges land seconds apart, so the
+# runs in the middle, and their release-reminder jobs, would be lost.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -34,7 +38,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up JDK ${{ matrix.java }}
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: ${{ matrix.java }}
           distribution: temurin
@@ -92,7 +96,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JDK 21
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: 21
           distribution: temurin
@@ -100,13 +104,22 @@ jobs:
       - name: Generate and submit dependency graph
         uses: gradle/actions/dependency-submission@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
-  # Fails a PR that adds or upgrades to a dependency with a known advisory, so a
-  # vulnerable version never reaches main. The action compares this PR's dependency
-  # snapshot against main's, so the PR snapshot is submitted first.
+  # Fails a PR that adds or upgrades to a dependency with a known advisory, so it is
+  # flagged before merging. It blocks the merge only once this job is a required check.
+  # The action compares this PR's dependency snapshot against main's, so the PR snapshot
+  # is submitted first.
+  #
+  # Skipped for pull requests from forks: GitHub gives those a read-only token, so the
+  # snapshot cannot be submitted and the job would always fail. A skipped job counts as
+  # passing if this is made a required check; dependency changes in a fork pull request
+  # are reviewed by hand. Dependabot's pull requests come from this repository, so they
+  # are still checked.
   dependency-review:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: write
       pull-requests: write
@@ -115,7 +128,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JDK 21
-        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: 21
           distribution: temurin
@@ -129,113 +142,300 @@ jobs:
           comment-summary-in-pr: on-failure
           retry-on-snapshot-warnings: true
 
-  # Security-only auto-release. When Dependabot merges a *security* update to a runtime
-  # dependency (one that ships in the published artifact), cut a patch release so the
-  # Maven Central artifact no longer carries the vulnerable dependency.
+  # Release reminder. A Dependabot *security* update to a runtime dependency (one that
+  # ships in the published artifact) merges like any other update, and nothing is
+  # released automatically. Until someone publishes a release, Maven Central still serves
+  # the vulnerable version, so this job opens an issue assigned to the repository owner.
+  # GitHub notifies an assignee, by email if their notification settings say so. If that
+  # issue is still open when another such update merges, the job adds a comment to it
+  # instead of opening a second one: one release covers them all.
   #
-  # Security PRs for runtime dependencies are identified by the "runtime-security"
-  # Dependabot group (see .github/dependabot.yml), whose branches are named
-  # dependabot/gradle/runtime-security-<hash>. Ordinary version bumps, test dependencies
-  # and build tooling are merged by auto-merge but never released automatically.
-  auto-release:
+  # These updates are recognised by the "runtime-security" Dependabot group (see
+  # .github/dependabot.yml). Dependabot names a group's branch after the group, so these
+  # should be dependabot/gradle/runtime-security-<hash>; none has occurred here yet. A
+  # security fix that reaches main on any other branch gets no reminder.
+  #
+  # The job does not wait for the build: the reminder is wanted even when the build on
+  # main fails.
+  release-reminder:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    needs: build
+    timeout-minutes: 5
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       github.event.head_commit.author.name == 'dependabot[bot]'
     permissions:
-      contents: write
-      actions: write
+      contents: read
       issues: write
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
       - name: Detect runtime security update
         id: detect
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.ref // ""')
-          echo "Merged PR branch: ${pr_head:-<none>}"
+          # This job runs only for a commit Dependabot wrote, and such a commit reaches main
+          # only through a pull request. GitHub can take a moment to link the two after a
+          # merge, so an empty answer is retried and then treated as a failure. Ending
+          # quietly here could lose a reminder.
+          pr_head=""
+          for attempt in 1 2 3 4 5 6; do
+            pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].head.ref // ""') || pr_head=""
+            if [ -n "$pr_head" ]; then break; fi
+            echo "No pull request found for this commit yet (attempt $attempt of 6)."
+            sleep 10
+          done
+          if [ -z "$pr_head" ]; then
+            echo "::error::No pull request was found for commit $GITHUB_SHA, so it could not be checked."
+            exit 1
+          fi
+          echo "Merged PR branch: $pr_head"
 
-          security=false
           case "$pr_head" in
-            dependabot/gradle/runtime-security-*) security=true ;;
+            dependabot/gradle/runtime-security-*)
+              echo "Runtime security update; opening a release reminder."
+              echo "remind=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Not a runtime security update; no reminder."
+              echo "remind=false" >> "$GITHUB_OUTPUT"
+              ;;
           esac
 
-          runtime=false
-          # Runtime dependencies are the [versions] keys backing `api` dependencies in build.gradle.
-          if git diff HEAD~1 HEAD -- gradle/libs.versions.toml | grep -Eq '^[+-](antlr|slf4j) = '; then
-            runtime=true
-          fi
-
-          echo "security-update=$security runtime-dependency-changed=$runtime"
-          if [ "$security" = true ] && [ "$runtime" = true ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Not a runtime security update; skipping release."
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Compute next patch version
-        if: steps.detect.outputs.release == 'true'
-        id: version
-        run: |
-          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
-          IFS=. read -r major minor patch <<< "${latest#v}"
-          next="v${major}.${minor}.$((patch + 1))"
-          echo "Latest tag: $latest -> next: $next"
-          echo "tag=$next" >> "$GITHUB_OUTPUT"
-
-      - name: Tag and create GitHub release
-        if: steps.detect.outputs.release == 'true'
+      - name: Ask for a release
+        if: steps.detect.outputs.remind == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          git tag "$TAG"
-          git push origin "$TAG"
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "Automated security patch release: ${COMMIT_MSG%%$'\n'*}" \
-            --generate-notes
+          subject=${COMMIT_MSG%%$'\n'*}
 
-      - name: Publish to Maven Central
-        if: steps.detect.outputs.release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-        # A release created with GITHUB_TOKEN does not fire the `release` event,
-        # so start the release workflow explicitly at the new tag.
-        run: gh workflow run release.yml --ref "$TAG"
+          # The last release, for a link to everything a new release would publish. The
+          # reminder is sent even when it cannot be found.
+          if ! latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null); then
+            latest=""
+          fi
+          case "$latest" in
+            v[0-9]*) since="Last release: \`$latest\`. Everything a new release would publish: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$latest...main" ;;
+            *) since="The last release could not be looked up, so compare main with the latest release tag yourself." ;;
+          esac
 
-      # Automated runs are not emailed to anyone on failure; leave an issue instead.
+          first_body=$(cat <<BODY
+          A Dependabot security update to a library this project ships was merged in \`$GITHUB_SHA\`:
+          $subject
+
+          The fix is on main, but Maven Central still serves the vulnerable version until a
+          release is published. Nothing is released automatically.
+
+          $since
+
+          Choose the version number under the README's Versioning section: a patch release, unless
+          the fix is a new major version of the dependency or other changes since the last release
+          need a higher number. Then publish a GitHub release with a \`vX.Y.Z\` tag and close this
+          issue.
+
+          One release covers every fix listed here. A fix merged before then is added as a comment.
+          BODY
+          )
+          later_body=$(cat <<BODY
+          Another Dependabot security update to a shipped library was merged in \`$GITHUB_SHA\`:
+          $subject
+
+          This reminder is still open, so the fix is added to it. One release covers every fix
+          listed here.
+
+          $since
+          BODY
+          )
+
+          # The label is how the search below finds an open reminder. Failing to create it
+          # must not stop the reminder itself.
+          gh label create release-needed --repo "$GITHUB_REPOSITORY" --force \
+            --color D93F0B --description "A security fix is on main and needs a release by hand" \
+            || echo "::warning::Could not create the release-needed label."
+
+          new_issue() {
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Security fix on main needs a release" \
+              --assignee "$GITHUB_REPOSITORY_OWNER" \
+              --body "$first_body" "$@"
+          }
+
+          # One open issue collects every fix that is waiting, because one release publishes
+          # them all. A later fix becomes a comment on it, which notifies the assignee the
+          # same way. If the search fails, or the issue cannot be labelled, open one anyway:
+          # a duplicate is better than no reminder.
+          open_issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --label release-needed --state open \
+            --json number --jq '.[0].number // empty') || open_issue=""
+          case "$open_issue" in
+            ''|*[!0-9]*)
+              new_issue --label release-needed || new_issue
+              ;;
+            *)
+              gh issue comment "$open_issue" --repo "$GITHUB_REPOSITORY" --body "$later_body"
+              ;;
+          esac
+
+      # GitHub emails a failed run only to whoever started it, and a bot started this one.
+      # Leave an issue instead, so a lost reminder is not missed.
       - name: Open issue on failure
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
-          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh label create release-failure --repo "$GITHUB_REPOSITORY" --force \
-            --color B60205 --description "An automated release workflow failed"
-          gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "Automated security release failed after: ${COMMIT_MSG%%$'\n'*}" \
-            --label release-failure \
-            --body "$(cat <<BODY
-          The CI \`auto-release\` job failed on commit \`$GITHUB_SHA\`.
+          subject=${COMMIT_MSG%%$'\n'*}
+          body=$(cat <<BODY
+          The CI \`release-reminder\` job failed on commit \`$GITHUB_SHA\`.
 
-          Intended tag: \`${TAG:-not computed}\`
           Run: $RUN_URL
 
-          Check whether the tag and GitHub release were created before retrying. If the tag
-          exists but nothing was published, run: \`gh workflow run release.yml --ref $TAG\`
+          Check whether that commit is a Dependabot security update to a shipped library
+          (\`antlr4-runtime\` or \`slf4j-api\`). If it is, the fix needs a release.
           BODY
-          )"
+          )
+          gh label create release-failure --repo "$GITHUB_REPOSITORY" --force \
+            --color B60205 --description "An automated release workflow failed" \
+            || echo "::warning::Could not create the release-failure label."
+
+          # Try the labelled, assigned issue first, then drop the label, then the assignee:
+          # each step down has fewer ways to fail.
+          new_issue() {
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "Release reminder failed after: $subject" --body "$body" "$@"
+          }
+          new_issue --label release-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
+            || new_issue --assignee "$GITHUB_REPOSITORY_OWNER" \
+            || new_issue
+
+  # Tells the repository owner when a run they did not start has failed. GitHub emails a
+  # failed run only to whoever started it, so a run started by Dependabot, or by the app
+  # that merges its pull requests, reaches nobody: a pull request with auto-merge enabled
+  # would sit open, or main would stay broken. The owner's own runs are left to GitHub's
+  # email.
+  #
+  # A pull request from a fork is skipped: its token cannot open an issue, and the owner
+  # reviews those by hand anyway.
+  #
+  # A cancelled job is reported only outside pull requests. There nothing cancels a run on
+  # purpose, so it means a job ran past its time limit or someone stopped the run. On a
+  # pull request a newer push cancels the older run, which is not worth a notice. Two
+  # consequences on pull requests: a job that runs past its time limit is not reported,
+  # and a job that had already failed before the run was replaced still is.
+  report-failure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: [ build, dependency-submission, dependency-review ]
+    if: >-
+      always() &&
+      (contains(needs.*.result, 'failure') ||
+       (github.event_name != 'pull_request' && contains(needs.*.result, 'cancelled'))) &&
+      github.actor != github.repository_owner &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SUBMISSION_RESULT: ${{ needs['dependency-submission'].result }}
+          REVIEW_RESULT: ${{ needs['dependency-review'].result }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              what="pull request #$PR_NUMBER: $PR_TITLE"
+              if [ "$BUILD_RESULT" = success ]; then
+                # The Java jobs passed, so the failure is in dependency-review, which does
+                # not hold a merge unless it has been made a required check.
+                next="The Java checks passed, and dependency-review does not hold a merge unless it has been made a required check. So a pull request with auto-merge enabled merges anyway and has probably merged already. Read the dependency-review log: if it found a vulnerable dependency, that dependency is now on main."
+              else
+                next="If the pull request has auto-merge enabled, it merges by itself once its checks pass."
+              fi
+              ;;
+            push)
+              what="main after: ${COMMIT_MSG%%$'\n'*}"
+              if [ "$SUBMISSION_RESULT" = success ]; then
+                next="The dependency baseline for this commit was still recorded. If the cause was not a failed download, main itself is broken and every pull request will fail the same way."
+              else
+                next="Until dependency-submission passes on main, the next pull requests have no dependency baseline to be compared against."
+              fi
+              ;;
+            *)
+              what="$GITHUB_REF_NAME"
+              next="This run was started by another workflow, such as the README update that follows a release."
+              ;;
+          esac
+          case "$BUILD_RESULT $SUBMISSION_RESULT $REVIEW_RESULT" in
+            *cancelled*) next="$next A job shown as cancelled most likely ran past its time limit. If the command above does not start it again, leave out --failed to run everything again." ;;
+          esac
+          body=$(cat <<BODY
+          CI failed on $what
+
+          The run was started by \`$GITHUB_ACTOR\`. GitHub emails a failed run only to whoever
+          started it, so this is the notice.
+
+          | Job | Result |
+          |---|---|
+          | Java 21 and Java 25 | $BUILD_RESULT |
+          | dependency-submission | $SUBMISSION_RESULT |
+          | dependency-review | $REVIEW_RESULT |
+
+          Run: $RUN_URL
+
+          If the log shows a download that failed (a dependency or plugin that could not be found
+          or resolved), run the failed jobs again:
+          \`gh run rerun $GITHUB_RUN_ID --repo $GITHUB_REPOSITORY --failed\`
+
+          $next
+
+          Close this issue once it is dealt with. Until then, later failures are added to it as
+          comments.
+          BODY
+          )
+          # The label is how the search below finds an open notice. Failing to create it must
+          # not stop the notice itself.
+          gh label create ci-failure --repo "$GITHUB_REPOSITORY" --force \
+            --color B60205 --description "A CI run nobody was emailed about has failed" \
+            || echo "::warning::Could not create the ci-failure label."
+
+          # Try the labelled, assigned issue first, then drop the label, then the assignee:
+          # each step down has fewer ways to fail. The title is the same for every failure,
+          # because one issue collects them and each failure names itself in its first line.
+          new_issue() {
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "CI failed in a run nobody was emailed about" --body "$body" "$@"
+          }
+          open_new_issue() {
+            new_issue --label ci-failure --assignee "$GITHUB_REPOSITORY_OWNER" \
+              || new_issue --assignee "$GITHUB_REPOSITORY_OWNER" \
+              || new_issue
+          }
+
+          # One open issue collects the failures, so an outage at a package site does not
+          # open one issue per run. A later failure becomes a comment on it, which notifies
+          # the assignee the same way. Failures that land in the same few seconds can still
+          # open one each. If the lookup or the comment fails, open an issue anyway: a
+          # duplicate is better than no notice.
+          #
+          # The lookup lists issues directly. A search would lag behind an issue opened
+          # moments ago. The list also holds pull requests, which are left out.
+          open_issue=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=ci-failure&state=open&per_page=100" \
+            --jq '[.[] | select(.pull_request == null)][0].number // empty') || open_issue=""
+          case "$open_issue" in
+            ''|*[!0-9]*)
+              open_new_issue
+              ;;
+            *)
+              gh issue comment "$open_issue" --repo "$GITHUB_REPOSITORY" --body "$body" \
+                || open_new_issue
+              ;;
+          esac
