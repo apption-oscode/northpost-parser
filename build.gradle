@@ -19,11 +19,6 @@ group = 'com.guidedbyte'
 version = scmVersion.version
 description = 'Canadian postal address parser library'
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 repositories {
     mavenCentral()
 }
